@@ -13,7 +13,8 @@ const globalForPrisma = globalThis as unknown as {
 };
 
 function createPrismaClient(): PrismaClient {
-  const connectionString = process.env.DATABASE_URL;
+  // Vercel-д хуулж тавихад санамсаргүй орсон зай, мөр таслалтыг цэвэрлэнэ
+  const connectionString = process.env.DATABASE_URL?.trim();
   if (!connectionString) {
     throw new Error(
       "DATABASE_URL тохируулаагүй байна. Локал дээр .env файлаа, " +
