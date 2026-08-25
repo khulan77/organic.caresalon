@@ -2,7 +2,13 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import { ACTIVE_STATUSES } from "@/lib/labels";
-import { addDays, dayRangeUtc, weekdayOf, type DateKey } from "@/lib/time";
+import {
+  addDays,
+  dayRangeUtc,
+  todayKey,
+  weekdayOf,
+  type DateKey,
+} from "@/lib/time";
 
 /** Хуанлийн толгойд харагдах салбаруудын жагсаалт. */
 export async function getBranches() {
@@ -252,6 +258,58 @@ export async function getPackageAdmin() {
 }
 
 export type PackageAdmin = Awaited<ReturnType<typeof getPackageAdmin>>;
+
+/** Ажилтны хуудас — салбараар бүлэглэсэн, хуваарь ба чөлөөтэй нь. */
+export async function getStaffAdmin() {
+  const today = new Date(`${todayKey()}T00:00:00.000Z`);
+
+  return prisma.branch.findMany({
+    where: { isActive: true },
+    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    select: {
+      id: true,
+      name: true,
+      openMin: true,
+      closeMin: true,
+      staff: {
+        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+        select: {
+          id: true,
+          name: true,
+          phone: true,
+          position: true,
+          color: true,
+          isActive: true,
+          branchId: true,
+          schedules: {
+            orderBy: { weekday: "asc" },
+            select: {
+              weekday: true,
+              isDayOff: true,
+              startMin: true,
+              endMin: true,
+            },
+          },
+          timeOffs: {
+            where: { date: { gte: today } },
+            orderBy: { date: "asc" },
+            select: {
+              id: true,
+              date: true,
+              startMin: true,
+              endMin: true,
+              reason: true,
+            },
+          },
+          _count: { select: { appointments: true } },
+        },
+      },
+    },
+  });
+}
+
+export type StaffAdmin = Awaited<ReturnType<typeof getStaffAdmin>>;
+export type StaffMember = StaffAdmin[number]["staff"][number];
 
 export type ServiceCatalog = Awaited<ReturnType<typeof getServiceCatalog>>;
 
