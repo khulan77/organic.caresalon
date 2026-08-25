@@ -84,6 +84,53 @@ Seed өгөгдлийн бүх хэрэглэгчийн нууц үг: `organic2
 | `80000002` | Ресепшн — River Plaza |
 | `80000003` | Ресепшн — Эрдэнэт |
 
+## Vercel дээр байршуулах
+
+**Локал `prisma dev` сан таны компьютер дээр л ажиллана.** Vercel түүн рүү хүрэхгүй
+тул production-д ҮҮЛЭН Postgres хэрэгтэй.
+
+### 1. Production өгөгдлийн сан үүсгэх
+
+```bash
+# Prisma Postgres (үнэгүй, хамгийн хурдан)
+npx create-db
+# эсвэл neon.tech / supabase.com дээр үүсгээд connection string-ээ авна
+```
+
+### 2. Vercel дээр орчны хувьсагч тохируулах
+
+Project → Settings → Environment Variables:
+
+| Нэр | Утга |
+| --- | --- |
+| `DATABASE_URL` | Дээрх үүлэн сангийн connection string |
+
+> `SHADOW_DATABASE_URL` нь зөвхөн локал `migrate dev`-д хэрэгтэй, Vercel дээр шаардлагагүй.
+
+### 3. Deploy
+
+`vercel-build` скрипт нь `prisma migrate deploy && next build` ажиллуулж,
+миграцыг production санд автоматаар түрхэнэ. `postinstall` нь Prisma Client
+үүсгэнэ (generated код git-д ороогүй тул энэ ЗААВАЛ хэрэгтэй).
+
+### 4. Анхны өгөгдөл нэг удаа ачаалах
+
+```bash
+DATABASE_URL="<production-url>" bun run db:seed
+```
+
+> ⚠️ `db:seed` нь **бүх өгөгдлийг устгаад** дахин бичдэг. Зөвхөн хамгийн эхэнд,
+> эсвэл демо өгөгдөл сэргээхэд ажиллуулна. Бодит ажиллагаа эхэлсэн хойно
+> хэзээ ч бүү ажиллуул.
+
+### Түгээмэл алдаа
+
+| Шинж тэмдэг | Шалтгаан |
+| --- | --- |
+| `This page couldn't load` / 500 | `DATABASE_URL` тохируулаагүй эсвэл локал санг заасан |
+| `@prisma/client did not initialize` | `postinstall` скрипт ажиллаагүй |
+| Нэвтэрч чадахгүй | Production санд seed ачаалаагүй — хэрэглэгч байхгүй |
+
 ## Шалгах командууд
 
 ```bash

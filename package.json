@@ -13,7 +13,9 @@
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
     "db:generate": "prisma generate",
-    "verify": "NODE_OPTIONS=--conditions=react-server tsx prisma/verify-validation.mts"
+    "verify": "NODE_OPTIONS=--conditions=react-server tsx prisma/verify-validation.mts",
+    "postinstall": "prisma generate",
+    "vercel-build": "prisma migrate deploy && next build"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",

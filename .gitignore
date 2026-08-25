@@ -42,3 +42,6 @@ yarn-error.log*
 next-env.d.ts
 
 /lib/generated/prisma
+
+# нууц утгууд (git-д хэзээ ч бүү оруул)
+DEPLOY-SECRETS.txt
