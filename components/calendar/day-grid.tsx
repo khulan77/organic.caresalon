@@ -20,8 +20,9 @@ import { AppointmentDialog, type DialogState } from "./appointment-dialog";
 
 /** Нэг минут хэдэн пиксел эзлэх — 1 цаг = 114px */
 const PX_PER_MIN = 1.9;
-const STAFF_COL_MIN_WIDTH = 210;
-const GUTTER_WIDTH = 76;
+/** Багана ба цагийн баганын өргөн — гар утсанд нарийсна. */
+const COL = "min-w-[168px] flex-1 md:min-w-[210px]";
+const GUTTER = "w-14 shrink-0 md:w-[76px]";
 
 type Props = {
   branch: BranchSummary;
@@ -172,13 +173,10 @@ export function DayGrid({
         className="min-h-0 flex-1 overflow-auto scrollbar-slim bg-white"
         ref={scrollRef}
       >
-        <div
-          className="relative"
-          style={{ minWidth: GUTTER_WIDTH + staff.length * STAFF_COL_MIN_WIDTH }}
-        >
+        <div className="relative w-max min-w-full">
           {/* ── Ажилтны толгой ── */}
           <div className="sticky top-0 z-20 flex border-b border-sand-200 bg-white">
-            <div className="shrink-0" style={{ width: GUTTER_WIDTH }} />
+            <div className={GUTTER} />
             {staff.map((member) => {
               const schedule = member.schedules[0];
               const dayOff = !schedule || schedule.isDayOff;
@@ -191,8 +189,7 @@ export function DayGrid({
               return (
                 <div
                   key={member.id}
-                  className="flex-1 border-l border-sand-200 px-3 py-5 text-center"
-                  style={{ minWidth: STAFF_COL_MIN_WIDTH }}
+                  className={`${COL} border-l border-sand-200 px-3 py-4 text-center md:py-5`}
                 >
                   <span
                     aria-hidden
@@ -216,13 +213,13 @@ export function DayGrid({
           {/* Дээд талын зай — эхний цагийн шошго таслагдахаас сэргийлнэ */}
           <div className="flex pt-2.5">
             <div
-              className="relative shrink-0"
-              style={{ width: GUTTER_WIDTH, height: gridHeight }}
+              className={`relative ${GUTTER}`}
+              style={{ height: gridHeight }}
             >
               {hourMarks.map((minute) => (
                 <div
                   key={minute}
-                  className="absolute right-4 -translate-y-1/2 font-mono text-xs text-sand-400"
+                  className="absolute right-2 -translate-y-1/2 font-mono text-[11px] text-sand-400 md:right-4 md:text-xs"
                   style={{ top: (minute - rangeStart) * PX_PER_MIN }}
                 >
                   {formatMinutes(minute)}
@@ -267,7 +264,6 @@ export function DayGrid({
             dateKey={dateKey}
             rangeStart={rangeStart}
             rangeEnd={rangeEnd}
-            gutter={GUTTER_WIDTH}
           />
         </div>
       </div>
@@ -325,8 +321,8 @@ function StaffColumn({
 
   return (
     <div
-      className="relative flex-1 border-l border-sand-200"
-      style={{ minWidth: STAFF_COL_MIN_WIDTH, height: gridHeight }}
+      className={`relative ${COL} border-l border-sand-200`}
+      style={{ height: gridHeight }}
     >
       {hourMarks.map((minute) => (
         <div
@@ -500,12 +496,10 @@ function CurrentTimeLine({
   dateKey,
   rangeStart,
   rangeEnd,
-  gutter,
 }: {
   dateKey: string;
   rangeStart: number;
   rangeEnd: number;
-  gutter: number;
 }) {
   const now = useSyncExternalStore(
     subscribeToClock,
@@ -520,8 +514,8 @@ function CurrentTimeLine({
 
   return (
     <div
-      className="pointer-events-none absolute inset-x-0 z-10 flex items-center"
-      style={{ top: (minutes - rangeStart) * PX_PER_MIN, paddingLeft: gutter - 5 }}
+      className="pointer-events-none absolute inset-x-0 z-10 flex items-center pl-[51px] md:pl-[71px]"
+      style={{ top: (minutes - rangeStart) * PX_PER_MIN }}
     >
       <span className="size-[9px] shrink-0 rounded-full bg-rose-400" />
       <span className="h-px flex-1 bg-rose-400" />

@@ -24,13 +24,13 @@ export function ClientSearch({ defaultValue }: { defaultValue: string }) {
         ) as HTMLInputElement;
         search(input.value.trim());
       }}
-      className="flex gap-2"
+      className="flex w-full gap-2 sm:w-auto"
     >
       <input
         name="q"
         defaultValue={value}
         placeholder="Нэр эсвэл утсаар хайх…"
-        className="w-52 rounded-lg border border-sand-300 px-2.5 py-1.5 text-sm outline-none placeholder:text-sand-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
+        className="w-full min-w-0 rounded-lg border sm:w-52 border-sand-300 px-2.5 py-1.5 text-sm outline-none placeholder:text-sand-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
       />
       <button
         type="submit"

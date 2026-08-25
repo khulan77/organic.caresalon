@@ -49,7 +49,7 @@ export default async function StaffPage() {
         subtitle={`${totalStaff} ажилтан · ${branches.length} салбар`}
       />
 
-      <div className="min-h-0 flex-1 overflow-auto scrollbar-slim p-4">
+      <div className="min-h-0 flex-1 overflow-auto scrollbar-slim p-4 md:p-6">
         <div className="space-y-6">
           {branches.map((branch) => (
             <section key={branch.id}>

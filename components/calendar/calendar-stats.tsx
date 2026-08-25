@@ -6,9 +6,9 @@ import { startTransition, useOptimistic } from "react";
 export type StatItem = { label: string; value: string };
 
 const VIEWS = [
-  { value: 0, label: "Өдөр" },
-  { value: 15, label: "15 хоног" },
-  { value: 30, label: "30 хоног" },
+  { value: 0, label: "Өдөр", short: "Өдөр" },
+  { value: 15, label: "15 хоног", short: "15х" },
+  { value: 30, label: "30 хоног", short: "30х" },
 ];
 
 /** Хуанлийн толгойн доорх хураангуй мөр ба харагдацын сонголт. */
@@ -35,29 +35,34 @@ export function CalendarStats({
   }
 
   return (
-    <div className="no-print flex flex-wrap items-center gap-x-8 gap-y-2 border-y border-sand-200 bg-sand-50 px-6 py-3">
-      {items.map((item) => (
-        <p key={item.label} className="flex items-baseline gap-2 text-sm">
-          <span className="text-sand-500">{item.label}</span>
-          <span className="font-semibold text-sand-900">{item.value}</span>
-        </p>
-      ))}
+    <div className="no-print flex items-center gap-x-5 border-y border-sand-200 bg-sand-50 px-4 py-2.5 md:gap-x-8 md:px-6 md:py-3">
+      {/* Гар утсанд мөр таслахын оронд хэвтээ гүйлгэнэ — өндөр хэмнэнэ */}
+      <div className="scrollbar-slim flex min-w-0 flex-1 items-center gap-x-5 overflow-x-auto md:gap-x-8">
+        {items.map((item) => (
+          <p
+            key={item.label}
+            className="flex shrink-0 items-baseline gap-2 whitespace-nowrap text-sm"
+          >
+            <span className="text-sand-500">{item.label}</span>
+            <span className="font-semibold text-sand-900">{item.value}</span>
+          </p>
+        ))}
+      </div>
 
-      <div className="flex-1" />
-
-      <div className="flex items-center gap-0.5 rounded-full bg-sand-200/70 p-1">
+      <div className="flex shrink-0 items-center gap-0.5 rounded-full bg-sand-200/70 p-1">
         {VIEWS.map((item) => (
           <button
             key={item.value}
             type="button"
             onClick={() => changeView(item.value)}
-            className={`rounded-full px-3.5 py-1 text-sm transition ${
+            className={`whitespace-nowrap rounded-full px-2.5 py-1 text-xs transition md:px-3.5 md:text-sm ${
               optimisticView === item.value
                 ? "bg-white font-medium text-sand-900 shadow-sm"
                 : "text-sand-500 hover:text-sand-800"
             }`}
           >
-            {item.label}
+            <span className="md:hidden">{item.short}</span>
+            <span className="hidden md:inline">{item.label}</span>
           </button>
         ))}
       </div>

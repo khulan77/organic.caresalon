@@ -94,20 +94,49 @@ export function AppRail({
 
   return (
     <>
-      {/* Урсгал дотор өргөсдөг тул агуулга баруун тийш шахагдана.
-          Цэс нээлттэй үед хулгана холдсон ч хураагдахгүй. */}
+      {/* Гар утсанд цэс нээх товч — rail нь тэнд далд байдаг */}
+      {!expanded ? (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          aria-label="Цэс нээх"
+          className="no-print fixed left-3 top-3 z-30 flex size-10 items-center justify-center rounded-full bg-brand-700 text-white shadow-lg md:hidden"
+        >
+          <svg viewBox="0 0 24 24" className="size-5" aria-hidden {...stroke}>
+            <path d="M4 7h16M4 12h16M4 17h16" />
+          </svg>
+        </button>
+      ) : null}
+
+      {/* Гар утсанд цэс нээлттэй үед арын бүрхүүл */}
+      {expanded ? (
+        <button
+          type="button"
+          aria-label="Цэс хаах"
+          onClick={() => {
+            setOpen(false);
+            setMenuOpen(false);
+          }}
+          className="no-print fixed inset-0 z-40 cursor-default bg-sand-900/40 md:hidden"
+        />
+      ) : null}
+
+      {/*
+        Компьютерт: урсгал дотор өргөсөж агуулгыг баруун тийш шахна.
+        Гар утсанд: агуулгын дээгүүр гарч ирэх drawer (зай хэмнэнэ).
+      */}
       <nav
         aria-label="Үндсэн цэс"
         data-expanded={expanded ? "" : undefined}
-        className={`no-print group relative z-30 flex shrink-0 flex-col overflow-hidden bg-brand-700 py-4 transition-[width] duration-200 ease-out ${
-          expanded ? "w-[228px]" : "w-[68px]"
-        }`}
+        className={`no-print group fixed inset-y-0 left-0 z-50 flex w-[228px] flex-col overflow-hidden bg-brand-700 py-4 transition-transform duration-200 ease-out md:relative md:z-30 md:shrink-0 md:translate-x-0 md:transition-[width] ${
+          expanded ? "translate-x-0" : "-translate-x-full"
+        } ${expanded ? "md:w-[228px]" : "md:w-[68px]"}`}
       >
         {/* Лого дээр дарж цэсийг нээж хаана */}
         <button
           type="button"
           onClick={() => setOpen((current) => !current)}
-          aria-label={expanded ? "Цэсийг хаах" : "Цэсийг нээх"}
+          aria-label={expanded ? "Цэс хураах" : "Цэс дэлгэх"}
           aria-expanded={expanded}
           className="mb-4 flex h-10 shrink-0 items-center gap-3 pl-[14px] text-left"
         >

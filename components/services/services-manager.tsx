@@ -92,14 +92,14 @@ export function ServicesManager({
                   })
                 }
               >
-                + Үйлчилгээ нэмэх
+                + Үйлчилгээ
               </PrimaryButton>
             </div>
           ) : null
         }
       />
 
-      <div className="min-h-0 flex-1 overflow-auto scrollbar-slim p-6">
+      <div className="min-h-0 flex-1 overflow-auto scrollbar-slim p-4 md:p-6">
         {error ? (
           <div className="mb-4">
             <Issues issues={[error]} />
@@ -164,15 +164,15 @@ export function ServicesManager({
                     Үйлчилгээ алга.
                   </p>
                 ) : (
-                  <div className="overflow-hidden rounded-xl border border-sand-200 bg-white">
-                    <table className="w-full text-sm">
+                  <div className="scrollbar-slim overflow-x-auto rounded-xl border border-sand-200 bg-white">
+                    <table className="w-full min-w-[440px] text-sm">
                       <thead className="border-b border-sand-200 bg-sand-100/60 text-left text-xs text-sand-600">
                         <tr>
                           <th className="px-4 py-2 font-medium">Нэр</th>
-                          <th className="w-28 px-4 py-2 font-medium">Хугацаа</th>
-                          <th className="w-56 px-4 py-2 text-right font-medium">Үнэ</th>
+                          <th className="hidden w-28 px-4 py-2 font-medium sm:table-cell">Хугацаа</th>
+                          <th className="w-44 px-4 py-2 text-right font-medium md:w-56">Үнэ</th>
                           {canEdit ? (
-                            <th className="w-44 px-4 py-2 text-right font-medium">
+                            <th className="w-36 px-4 py-2 text-right font-medium md:w-44">
                               Үйлдэл
                             </th>
                           ) : null}
@@ -273,8 +273,12 @@ function ServiceRow({
             </span>
           ) : null}
         </span>
+        {/* Гар утсанд «Хугацаа» багана нуугддаг тул энд харуулна */}
+        <span className="ml-4 block text-xs text-sand-500 sm:hidden">
+          {formatDuration(service.durationMin)}
+        </span>
       </td>
-      <td className="px-4 py-2.5 text-sand-600">
+      <td className="hidden px-4 py-2.5 text-sand-600 sm:table-cell">
         {formatDuration(service.durationMin)}
       </td>
       <td className="px-4 py-2.5 text-right">

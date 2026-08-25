@@ -48,14 +48,14 @@ export default async function ClientsPage(props: PageProps<"/clients">) {
         action={<ClientSearch defaultValue={query} />}
       />
 
-      <div className="min-h-0 flex-1 overflow-auto scrollbar-slim p-4">
+      <div className="min-h-0 flex-1 overflow-auto scrollbar-slim p-4 md:p-6">
         {clients.length === 0 ? (
           <p className="rounded-xl border border-sand-200 bg-white px-4 py-8 text-center text-sand-500">
             {query ? "Хайлтад тохирох үйлчлүүлэгч олдсонгүй." : "Бүртгэл алга."}
           </p>
         ) : (
-          <div className="overflow-hidden rounded-xl border border-sand-200 bg-white">
-            <table className="w-full text-sm">
+          <div className="scrollbar-slim overflow-x-auto rounded-xl border border-sand-200 bg-white">
+            <table className="w-full min-w-[560px] text-sm">
               <thead className="border-b border-sand-200 bg-sand-50 text-left text-xs text-sand-600">
                 <tr>
                   <th className="px-4 py-2 font-medium">Нэр</th>

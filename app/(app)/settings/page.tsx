@@ -42,11 +42,11 @@ export default async function SettingsPage() {
     <>
       <PageHeader title="Тохиргоо" subtitle="Зөвхөн админ харна" />
 
-      <div className="min-h-0 flex-1 space-y-6 overflow-auto scrollbar-slim p-4">
+      <div className="min-h-0 flex-1 space-y-6 overflow-auto scrollbar-slim p-4 md:p-6">
         <section>
           <h2 className="mb-2 text-sm font-semibold text-sand-800">Салбар</h2>
-          <div className="overflow-hidden rounded-xl border border-sand-200 bg-white">
-            <table className="w-full text-sm">
+          <div className="scrollbar-slim overflow-x-auto rounded-xl border border-sand-200 bg-white">
+            <table className="w-full min-w-[560px] text-sm">
               <thead className="border-b border-sand-200 bg-sand-50 text-left text-xs text-sand-600">
                 <tr>
                   <th className="px-4 py-2 font-medium">Нэр</th>
@@ -86,8 +86,8 @@ export default async function SettingsPage() {
 
         <section>
           <h2 className="mb-2 text-sm font-semibold text-sand-800">Хэрэглэгч</h2>
-          <div className="overflow-hidden rounded-xl border border-sand-200 bg-white">
-            <table className="w-full text-sm">
+          <div className="scrollbar-slim overflow-x-auto rounded-xl border border-sand-200 bg-white">
+            <table className="w-full min-w-[560px] text-sm">
               <thead className="border-b border-sand-200 bg-sand-50 text-left text-xs text-sand-600">
                 <tr>
                   <th className="px-4 py-2 font-medium">Нэр</th>

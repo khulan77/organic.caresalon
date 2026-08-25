@@ -73,7 +73,7 @@ export function PackagesManager({
         }
       />
 
-      <div className="min-h-0 flex-1 overflow-auto scrollbar-slim p-6">
+      <div className="min-h-0 flex-1 overflow-auto scrollbar-slim p-4 md:p-6">
         {error ? (
           <div className="mb-4">
             <Issues issues={[error]} />
