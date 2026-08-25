@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { getEffectiveRole } from "@/lib/preview";
 import { AppRail } from "@/components/app-rail";
@@ -5,6 +6,11 @@ import { AppRail } from "@/components/app-rail";
 export default async function AppLayout({ children }: LayoutProps<"/">) {
   // Хамгаалалт өгөгдөл хандах давхаргад — proxy дээрх шалгалтад ганцаараа найдахгүй.
   const user = await requireUser();
+
+  // Түр нууц үгтэй хүн апп руу орохгүй. Энэ хуудас (app) бүлгээс ГАДНА
+  // байгаа тул давталт үүсэхгүй.
+  if (user.mustChangePassword) redirect("/change-password");
+
   // Админ «Ресепшн» харагдацыг урьдчилан харж болно (зөвхөн UI, хамгаалалт биш)
   const effectiveRole = await getEffectiveRole(user);
 

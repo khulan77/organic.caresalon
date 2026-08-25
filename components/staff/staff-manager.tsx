@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useState, useTransition } from "react";
-import type { StaffAdmin, StaffMember } from "@/lib/queries";
+import type { StaffAdmin, StaffMember, UsersAdmin } from "@/lib/queries";
 import { WEEKDAYS, WEEKDAYS_SHORT } from "@/lib/labels";
 import { formatMinutes, toDateKey, todayKey } from "@/lib/time";
 import type { ActionResult } from "@/lib/action-result";
@@ -13,6 +13,7 @@ import {
   toggleStaff,
 } from "@/app/(app)/staff/actions";
 import { PageHeader } from "@/components/page-header";
+import { ReceptionSection } from "@/components/staff/reception-manager";
 import { Modal } from "@/components/ui/modal";
 import {
   Field,
@@ -42,9 +43,11 @@ type Editing =
 
 export function StaffManager({
   branches,
+  users,
   canEdit,
 }: {
   branches: StaffAdmin;
+  users: UsersAdmin;
   canEdit: boolean;
 }) {
   const [editing, setEditing] = useState<Editing>(null);
@@ -156,6 +159,12 @@ export function StaffManager({
               )}
             </section>
           ))}
+
+          <ReceptionSection
+            users={users}
+            branches={branches}
+            canEdit={canEdit}
+          />
         </div>
       </div>
 

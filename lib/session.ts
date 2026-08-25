@@ -21,6 +21,8 @@ export type CurrentUser = {
   phone: string;
   role: "ADMIN" | "RECEPTION";
   branchId: string | null;
+  /** Түр нууц үгтэй байгаа — өөрийн нууц үгээ тохируулах хүртэл цааш оруулахгүй. */
+  mustChangePassword: boolean;
 };
 
 /**
@@ -79,6 +81,7 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
           role: true,
           branchId: true,
           isActive: true,
+          mustChangePassword: true,
         },
       },
     },
@@ -94,6 +97,7 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
     phone: session.user.phone,
     role: session.user.role,
     branchId: session.user.branchId,
+    mustChangePassword: session.user.mustChangePassword,
   };
 });
 

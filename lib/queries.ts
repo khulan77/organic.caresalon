@@ -313,6 +313,31 @@ export type StaffMember = StaffAdmin[number]["staff"][number];
 
 export type ServiceCatalog = Awaited<ReturnType<typeof getServiceCatalog>>;
 
+/**
+ * Системд нэвтрэх эрхтэй хэрэглэгчид (админ, ресепшн).
+ * `passwordHash` ЭНД ОРОХГҮЙ — client рүү хэзээ ч явуулахгүй.
+ */
+export async function getUsersAdmin() {
+  return prisma.user.findMany({
+    orderBy: [{ role: "asc" }, { name: "asc" }],
+    select: {
+      id: true,
+      name: true,
+      phone: true,
+      role: true,
+      branchId: true,
+      isActive: true,
+      mustChangePassword: true,
+      lastLoginAt: true,
+      branch: { select: { name: true } },
+      _count: { select: { createdAppts: true } },
+    },
+  });
+}
+
+export type UsersAdmin = Awaited<ReturnType<typeof getUsersAdmin>>;
+export type UserRow = UsersAdmin[number];
+
 /** Үйлчлүүлэгчийг нэр эсвэл утсаар хайх (захиалга үүсгэх цонхонд). */
 export async function searchClients(query: string, limit = 8) {
   const trimmed = query.trim();
