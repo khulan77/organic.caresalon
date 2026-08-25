@@ -1,0 +1,580 @@
+"use client";
+
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import type {
+  BranchSummary,
+  DayAppointment,
+  DayStaff,
+  PackageList,
+  ServiceCatalog,
+} from "@/lib/queries";
+import { formatMinutes, toDateKey, toLocalMinutes } from "@/lib/time";
+import { AppointmentDialog, type DialogState } from "./appointment-dialog";
+
+/** Нэг минут хэдэн пиксел эзлэх — 1 цаг = 114px */
+const PX_PER_MIN = 1.9;
+const STAFF_COL_MIN_WIDTH = 210;
+const GUTTER_WIDTH = 76;
+
+type Props = {
+  branch: BranchSummary;
+  dateKey: string;
+  staff: DayStaff[];
+  appointments: DayAppointment[];
+  closure: {
+    isClosed: boolean;
+    openMin: number | null;
+    closeMin: number | null;
+    reason: string | null;
+  } | null;
+  catalog: ServiceCatalog;
+  packages: PackageList;
+};
+
+/** Захиалгын өнгө — үйлчилгээнийх, эс бөгөөс ангиллынх. */
+function colorOf(appointment: DayAppointment): string {
+  const first = appointment.items[0];
+  return first?.service.color ?? first?.service.category.color ?? "#a39887";
+}
+
+/** Өнгийг цайруулж дэвсгэр болгоно. */
+function tint(color: string, percent: number): string {
+  return `color-mix(in srgb, ${color} ${percent}%, white)`;
+}
+
+/** "Сарнай" → "СА" */
+function initialsOf(name: string): string {
+  const cleaned = name.replace(/[^\p{L}\s]/gu, "").trim();
+  const words = cleaned.split(/\s+/).filter(Boolean);
+  if (words.length >= 2) {
+    return (words[0][0] + words[1][0]).toUpperCase();
+  }
+  return cleaned.slice(0, 2).toUpperCase();
+}
+
+export function DayGrid({
+  branch,
+  dateKey,
+  staff,
+  appointments,
+  closure,
+  catalog,
+  packages,
+}: Props) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [dialog, setDialog] = useState<DialogState | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Тухайн өдрийн ажлын цаг — онцгой тохиргоо байвал түүнийг барина
+  const openMin = closure?.openMin ?? branch.openMin;
+  const closeMin = closure?.closeMin ?? branch.closeMin;
+
+  // Ажлын цагаас гадуур захиалга байвал хуанлийг сунгана — нуугдахаас сэргийлнэ
+  const { rangeStart, rangeEnd } = useMemo(() => {
+    let start = openMin;
+    let end = closeMin;
+    for (const appt of appointments) {
+      start = Math.min(start, toLocalMinutes(appt.startAt));
+      const apptEnd = toLocalMinutes(appt.endAt);
+      end = Math.max(end, apptEnd === 0 ? 24 * 60 : apptEnd);
+    }
+    return {
+      rangeStart: Math.floor(start / 60) * 60,
+      rangeEnd: Math.ceil(end / 60) * 60,
+    };
+  }, [appointments, openMin, closeMin]);
+
+  const gridHeight = (rangeEnd - rangeStart) * PX_PER_MIN;
+
+  const hourMarks = useMemo(() => {
+    const marks: number[] = [];
+    for (let m = rangeStart; m <= rangeEnd; m += 60) marks.push(m);
+    return marks;
+  }, [rangeStart, rangeEnd]);
+
+  const byStaff = useMemo(() => {
+    const map = new Map<string, DayAppointment[]>();
+    for (const member of staff) map.set(member.id, []);
+    for (const appt of appointments) map.get(appt.staffId)?.push(appt);
+    return map;
+  }, [staff, appointments]);
+
+  // Ажлын цаг руу автоматаар гүйлгэнэ
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = Math.max(0, (openMin - rangeStart) * PX_PER_MIN - 8);
+  }, [openMin, rangeStart, dateKey]);
+
+  // Толгойн «Захиалга нэмэх» товч `?new=1`-ээр цонх нээнэ
+  const wantsNew = searchParams.get("new") === "1";
+
+  function clearNewParam() {
+    if (!wantsNew) return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("new");
+    router.replace(`/calendar?${params.toString()}`, { scroll: false });
+  }
+
+  const defaultCreate = useMemo<DialogState | null>(() => {
+    const working = staff.find((m) => m.schedules[0] && !m.schedules[0].isDayOff);
+    if (!working) return null;
+    return {
+      mode: "create",
+      branchId: branch.id,
+      dateKey,
+      staffId: working.id,
+      startMin: Math.max(openMin, working.schedules[0].startMin),
+    };
+  }, [staff, branch.id, dateKey, openMin]);
+
+  // Төлөвт бичихгүйгээр URL-аас гаргаж авна
+  const activeDialog = dialog ?? (wantsNew ? defaultCreate : null);
+
+  function closeDialog() {
+    setDialog(null);
+    clearNewParam();
+  }
+
+  if (staff.length === 0) {
+    return (
+      <div className="grid flex-1 place-items-center p-8 text-center">
+        <div>
+          <p className="font-medium text-sand-800">
+            Энэ салбарт ажилтан бүртгэгдээгүй байна.
+          </p>
+          <p className="mt-1 text-sm text-sand-500">
+            Ажилтан хэсгээс ажилтан нэмнэ үү.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {closure?.isClosed ? (
+        <div className="no-print border-b border-amber-200 bg-amber-50 px-6 py-2 text-sm text-amber-900">
+          Тухайн өдөр салбар хаалттай
+          {closure.reason ? ` — ${closure.reason}` : ""}.
+        </div>
+      ) : null}
+
+      <div
+        className="min-h-0 flex-1 overflow-auto scrollbar-slim bg-white"
+        ref={scrollRef}
+      >
+        <div
+          className="relative"
+          style={{ minWidth: GUTTER_WIDTH + staff.length * STAFF_COL_MIN_WIDTH }}
+        >
+          {/* ── Ажилтны толгой ── */}
+          <div className="sticky top-0 z-20 flex border-b border-sand-200 bg-white">
+            <div className="shrink-0" style={{ width: GUTTER_WIDTH }} />
+            {staff.map((member) => {
+              const schedule = member.schedules[0];
+              const dayOff = !schedule || schedule.isDayOff;
+              const count =
+                byStaff
+                  .get(member.id)
+                  ?.filter(
+                    (a) => a.status !== "CANCELLED" && a.status !== "NO_SHOW",
+                  ).length ?? 0;
+              return (
+                <div
+                  key={member.id}
+                  className="flex-1 border-l border-sand-200 px-3 py-5 text-center"
+                  style={{ minWidth: STAFF_COL_MIN_WIDTH }}
+                >
+                  <span
+                    aria-hidden
+                    className="mx-auto flex size-11 items-center justify-center rounded-full text-sm font-medium tracking-wide text-white"
+                    style={{ backgroundColor: member.color }}
+                  >
+                    {initialsOf(member.name)}
+                  </span>
+                  <p className="mt-2.5 truncate text-[15px] font-medium text-sand-900">
+                    {member.name}
+                  </p>
+                  <p className="mt-0.5 truncate text-xs text-sand-500">
+                    {dayOff ? "Амралттай" : `${count} захиалга`}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* ── Хуанлийн их бие ── */}
+          {/* Дээд талын зай — эхний цагийн шошго таслагдахаас сэргийлнэ */}
+          <div className="flex pt-2.5">
+            <div
+              className="relative shrink-0"
+              style={{ width: GUTTER_WIDTH, height: gridHeight }}
+            >
+              {hourMarks.map((minute) => (
+                <div
+                  key={minute}
+                  className="absolute right-4 -translate-y-1/2 font-mono text-xs text-sand-400"
+                  style={{ top: (minute - rangeStart) * PX_PER_MIN }}
+                >
+                  {formatMinutes(minute)}
+                </div>
+              ))}
+            </div>
+
+            {staff.map((member) => (
+              <StaffColumn
+                key={member.id}
+                member={member}
+                appointments={byStaff.get(member.id) ?? []}
+                rangeStart={rangeStart}
+                rangeEnd={rangeEnd}
+                gridHeight={gridHeight}
+                slotMin={branch.slotMin}
+                hourMarks={hourMarks}
+                onCreate={(startMin) => {
+                  clearNewParam();
+                  setDialog({
+                    mode: "create",
+                    branchId: branch.id,
+                    dateKey,
+                    staffId: member.id,
+                    startMin,
+                  });
+                }}
+                onOpen={(appointment) => {
+                  clearNewParam();
+                  setDialog({
+                    mode: "edit",
+                    branchId: branch.id,
+                    dateKey,
+                    appointment,
+                  });
+                }}
+              />
+            ))}
+          </div>
+
+          <CurrentTimeLine
+            dateKey={dateKey}
+            rangeStart={rangeStart}
+            rangeEnd={rangeEnd}
+            gutter={GUTTER_WIDTH}
+          />
+        </div>
+      </div>
+
+      {activeDialog ? (
+        <AppointmentDialog
+          key={
+            activeDialog.mode === "edit"
+              ? activeDialog.appointment.id
+              : `${activeDialog.staffId}-${activeDialog.startMin}`
+          }
+          state={activeDialog}
+          staff={staff}
+          catalog={catalog}
+          packages={packages}
+          onClose={closeDialog}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function StaffColumn({
+  member,
+  appointments,
+  rangeStart,
+  rangeEnd,
+  gridHeight,
+  slotMin,
+  hourMarks,
+  onCreate,
+  onOpen,
+}: {
+  member: DayStaff;
+  appointments: DayAppointment[];
+  rangeStart: number;
+  rangeEnd: number;
+  gridHeight: number;
+  slotMin: number;
+  hourMarks: number[];
+  onCreate: (startMin: number) => void;
+  onOpen: (appointment: DayAppointment) => void;
+}) {
+  const schedule = member.schedules[0];
+  const dayOff = !schedule || schedule.isDayOff;
+  const laidOut = useMemo(() => layoutAppointments(appointments), [appointments]);
+
+  function handleClick(event: React.MouseEvent<HTMLDivElement>) {
+    if (dayOff) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const raw = rangeStart + (event.clientY - rect.top) / PX_PER_MIN;
+    const snapped = Math.floor(raw / slotMin) * slotMin;
+    onCreate(Math.max(rangeStart, Math.min(snapped, rangeEnd - slotMin)));
+  }
+
+  return (
+    <div
+      className="relative flex-1 border-l border-sand-200"
+      style={{ minWidth: STAFF_COL_MIN_WIDTH, height: gridHeight }}
+    >
+      {hourMarks.map((minute) => (
+        <div
+          key={minute}
+          className="pointer-events-none absolute inset-x-0 border-t border-sand-200/70"
+          style={{ top: (minute - rangeStart) * PX_PER_MIN }}
+        />
+      ))}
+
+      {dayOff ? (
+        <div className="day-off-shade pointer-events-none absolute inset-0" />
+      ) : (
+        <>
+          <Shade from={rangeStart} to={schedule.startMin} rangeStart={rangeStart} />
+          <Shade from={schedule.endMin} to={rangeEnd} rangeStart={rangeStart} />
+        </>
+      )}
+
+      {member.timeOffs.map((off, index) => (
+        <div
+          key={index}
+          className="day-off-shade pointer-events-none absolute inset-x-0 flex items-start justify-center px-1 pt-1 text-[11px] text-sand-500"
+          style={{
+            top: ((off.startMin ?? 0) - rangeStart) * PX_PER_MIN,
+            height: ((off.endMin ?? 24 * 60) - (off.startMin ?? 0)) * PX_PER_MIN,
+          }}
+        >
+          <span className="truncate">{off.reason ?? "Чөлөө"}</span>
+        </div>
+      ))}
+
+      <div
+        role="button"
+        tabIndex={dayOff ? -1 : 0}
+        aria-label={`${member.name} — шинэ цаг захиалах`}
+        onClick={handleClick}
+        className={`absolute inset-0 ${dayOff ? "cursor-not-allowed" : "cursor-copy"}`}
+      />
+
+      {laidOut.map(({ appointment, column, columns }) => (
+        <AppointmentBlock
+          key={appointment.id}
+          appointment={appointment}
+          rangeStart={rangeStart}
+          column={column}
+          columns={columns}
+          onOpen={onOpen}
+        />
+      ))}
+    </div>
+  );
+}
+
+function Shade({
+  from,
+  to,
+  rangeStart,
+}: {
+  from: number;
+  to: number;
+  rangeStart: number;
+}) {
+  if (to <= from) return null;
+  return (
+    <div
+      className="pointer-events-none absolute inset-x-0 bg-sand-100"
+      style={{
+        top: (from - rangeStart) * PX_PER_MIN,
+        height: (to - from) * PX_PER_MIN,
+      }}
+    />
+  );
+}
+
+function AppointmentBlock({
+  appointment,
+  rangeStart,
+  column,
+  columns,
+  onOpen,
+}: {
+  appointment: DayAppointment;
+  rangeStart: number;
+  column: number;
+  columns: number;
+  onOpen: (appointment: DayAppointment) => void;
+}) {
+  const startMin = toLocalMinutes(appointment.startAt);
+  const endLocal = toLocalMinutes(appointment.endAt);
+  const endMin = endLocal <= startMin ? 24 * 60 : endLocal;
+  const duration = endMin - startMin;
+
+  const color = colorOf(appointment);
+  const cancelled = appointment.status === "CANCELLED";
+  const noShow = appointment.status === "NO_SHOW";
+  const width = 100 / columns;
+  const compact = duration < 40;
+
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(appointment)}
+      title={`${appointment.client.name} · ${formatMinutes(startMin)}–${formatMinutes(endMin)} · ${appointment.items.map((i) => i.name).join(", ")}`}
+      className={`absolute overflow-hidden rounded-lg pl-3.5 pr-2.5 text-left transition hover:z-10 hover:shadow-md focus:z-10 focus:outline-none focus:ring-2 focus:ring-brand-500/40 ${
+        compact ? "py-1" : "py-2"
+      } ${noShow ? "hatched" : ""}`}
+      style={{
+        top: (startMin - rangeStart) * PX_PER_MIN + 2,
+        height: Math.max(duration * PX_PER_MIN - 4, 22),
+        left: `calc(${column * width}% + 4px)`,
+        width: `calc(${width}% - 8px)`,
+        backgroundColor: tint(color, cancelled ? 5 : 10),
+        opacity: cancelled ? 0.65 : 1,
+      }}
+    >
+      {/* Зүүн талын өнгөт зурвас */}
+      <span
+        aria-hidden
+        className="absolute inset-y-0 left-0 w-[4px]"
+        style={{ backgroundColor: color, opacity: cancelled ? 0.5 : 1 }}
+      />
+
+      <p className="truncate font-mono text-[11px]" style={{ color }}>
+        {formatMinutes(startMin)} – {formatMinutes(endMin)}
+      </p>
+      <p
+        className={`truncate text-sm font-semibold text-sand-900 ${
+          cancelled ? "line-through" : ""
+        }`}
+      >
+        {appointment.client.name}
+      </p>
+      {!compact ? (
+        <p className="truncate text-[13px]" style={{ color }}>
+          {appointment.items.map((item) => item.name).join(", ")}
+        </p>
+      ) : null}
+    </button>
+  );
+}
+
+/**
+ * Цагийг гадаад эх сурвалж болгон захиалж авна.
+ * Минут солигдох бүрд л шинэ утга буцаана — эс бөгөөс React төгсгөлгүй давтана.
+ */
+let cachedMinuteKey = "";
+let cachedNow: Date | null = null;
+
+function subscribeToClock(onChange: () => void) {
+  const timer = setInterval(onChange, 30_000);
+  return () => clearInterval(timer);
+}
+
+function getClockSnapshot(): Date | null {
+  const now = new Date();
+  const key = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${now.getHours()}-${now.getMinutes()}`;
+  if (key !== cachedMinuteKey) {
+    cachedMinuteKey = key;
+    cachedNow = now;
+  }
+  return cachedNow;
+}
+
+/** Сервер дээр цаг байхгүй — hydration зөрөхөөс сэргийлнэ. */
+function getServerClockSnapshot(): Date | null {
+  return null;
+}
+
+/** Одоогийн цагийн шугам — зөвхөн өнөөдрийн харагдацад. */
+function CurrentTimeLine({
+  dateKey,
+  rangeStart,
+  rangeEnd,
+  gutter,
+}: {
+  dateKey: string;
+  rangeStart: number;
+  rangeEnd: number;
+  gutter: number;
+}) {
+  const now = useSyncExternalStore(
+    subscribeToClock,
+    getClockSnapshot,
+    getServerClockSnapshot,
+  );
+
+  if (!now || toDateKey(now) !== dateKey) return null;
+
+  const minutes = toLocalMinutes(now);
+  if (minutes < rangeStart || minutes > rangeEnd) return null;
+
+  return (
+    <div
+      className="pointer-events-none absolute inset-x-0 z-10 flex items-center"
+      style={{ top: (minutes - rangeStart) * PX_PER_MIN, paddingLeft: gutter - 5 }}
+    >
+      <span className="size-[9px] shrink-0 rounded-full bg-rose-400" />
+      <span className="h-px flex-1 bg-rose-400" />
+    </div>
+  );
+}
+
+/**
+ * Давхцсан захиалгуудыг зэрэгцээ багана болгож байрлуулна.
+ * Идэвхтэй захиалга давхцахгүй ч цуцалсан захиалга давхцаж болно.
+ */
+function layoutAppointments(appointments: DayAppointment[]) {
+  const sorted = [...appointments].sort(
+    (a, b) => a.startAt.getTime() - b.startAt.getTime(),
+  );
+
+  const result: {
+    appointment: DayAppointment;
+    column: number;
+    columns: number;
+  }[] = [];
+
+  let cluster: DayAppointment[] = [];
+  let clusterEnd = 0;
+
+  function flush() {
+    if (cluster.length === 0) return;
+    const columnEnds: number[] = [];
+    const placed = cluster.map((appt) => {
+      const start = appt.startAt.getTime();
+      let column = columnEnds.findIndex((end) => end <= start);
+      if (column === -1) {
+        column = columnEnds.length;
+        columnEnds.push(0);
+      }
+      columnEnds[column] = appt.endAt.getTime();
+      return { appointment: appt, column };
+    });
+    for (const item of placed) {
+      result.push({ ...item, columns: columnEnds.length });
+    }
+    cluster = [];
+  }
+
+  for (const appt of sorted) {
+    if (cluster.length > 0 && appt.startAt.getTime() >= clusterEnd) {
+      flush();
+      clusterEnd = 0;
+    }
+    cluster.push(appt);
+    clusterEnd = Math.max(clusterEnd, appt.endAt.getTime());
+  }
+  flush();
+
+  return result;
+}

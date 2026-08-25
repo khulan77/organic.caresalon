@@ -1,36 +1,139 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Organic Care — салонын удирдлагын систем
 
-## Getting Started
+Organic Care Nails & Spa-гийн **дотоод** систем. Ресепшн нар цаг захиалга
+бүртгэж, өдрийн хуанлиа хардаг. Үйлчлүүлэгчийн онлайн захиалгын тал **байхгүй**.
 
-First, run the development server:
+- Салбар: Olympic Residence, River Plaza, Эрдэнэт
+- Хэрэглэгч: админ 1, ресепшн 3 — ресепшн **бүх салбарын** хуанлийг харна
+
+## Технологи
+
+| Давхарга | Сонголт |
+| --- | --- |
+| Framework | Next.js 16.3 (App Router, Turbopack) |
+| Хэл | TypeScript |
+| ORM | Prisma 7 (`prisma-client` generator + `@prisma/adapter-pg`) |
+| Өгөгдлийн сан | PostgreSQL |
+| Загвар | Tailwind CSS 4 (Source Serif 4 + Inter + JetBrains Mono) |
+| Багц удирдагч | Bun |
+
+## Үндсэн дүрмүүд
+
+1. **Бүх текст монголоор.** Кодын тайлбар, UI, алдааны мессеж бүгд.
+2. **Цаг UTC-д хадгална.** `Appointment.startAt/endAt` нь UTC.
+   Ажлын цаг (`openMin`, `startMin`) нь Улаанбаатарын **локал** шөнө дундаас
+   хойшх минут (600 = 10:00). Хөрвүүлэлт бүхэлдээ [`lib/time.ts`](lib/time.ts)-д.
+3. **Үнийн гурван давхарга.** [`lib/pricing.ts`](lib/pricing.ts)-д төвлөрсөн:
+   - **Хямдрал** — үйлчилгээний `salePrice` (+ сонголтоор `saleEndsAt`)
+   - **Багц** — хэдэн үйлчилгээг нэг тогтмол үнээр; зөрүү нь хөнгөлөлт болно
+   - **Нэмэлт хөнгөлөлт** — тухайн захиалганд гараар өгсөн дүн
+
+   Захиалгад `subtotal`, `discount`, `totalPrice` гурвуулаа хадгалагдана.
+   Үнэ нь `AppointmentService`-д царцдаг тул хожим үнэ өөрчлөгдөхөд түүх
+   алдагдахгүй. Клиентээс ирсэн үнэд НАЙДАХГҮЙ — `resolveBooking()` сервер
+   дээр бүгдийг дахин тооцно.
+4. **Хуанлийн өнгө нь үйлчилгээнээс.** `Service.color` (хоосон бол
+   `ServiceCategory.color`) блокийн зүүн зурвас ба дэвсгэрийг тодорхойлно.
+   Төлөвийг тусдаа тэмдэглэнэ: цуцалсан = дундуур зураас + бүдэгрүүлэлт,
+   ирээгүй = ташуу зураас.
+5. **Давхцлыг сервер талд шалгана.** Хоёр давхар хамгаалалт:
+   - [`lib/appointments.ts`](lib/appointments.ts) — `validateSlot()` нь хэрэглэгчид
+     ойлгомжтой монгол мессеж буцаана (ажлын цаг, амралт, чөлөө, давхцал…).
+   - Өгөгдлийн санд `appointments_no_staff_overlap` **EXCLUDE** хязгаарлалт —
+     хоёр ресепшн яг нэг зэрэг захиалахад ч давхардал үүсэхгүй.
+   - Үнэ, хугацааг клиентээс **авахгүй**, сервер дээр сангаас дахин тооцно.
+
+## Эрх ба «Ресепшн» урьдчилан харах
+
+Ресепшн бүх салбарын хуанлийг харна; зөвхөн Тохиргоо хэсэг админд нээлттэй.
+
+Толгой дэх «Эрх · Админ / Ресепшн» сонголт нь **зөвхөн ХАРАГДАХ БАЙДЛЫГ**
+өөрчилдөг урьдчилан харах горим (админд л харагдана) — захиалагчид үзүүлэхэд
+зориулсан. Серверийн эрхийн шалгалт (`requireAdmin`) бодит `user.role`-оор
+хийгддэг тул энэ нь хамгаалалтын хил БИШ.
+
+## Эхлүүлэх
+
+Шаардлага: Bun, Node.js **22+** (локал Postgres нь `node:sqlite` ашигладаг).
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+bun install
+
+# 1) Локал Postgres асаах (тусдаа терминалд, ажиллаж байх ёстой)
+bun run db:dev
+
+# 2) db:dev хэвлэсэн DATABASE_URL / SHADOW_DATABASE_URL-ийг .env-д хуулах
+#    (порт дахин асаах бүрд өөрчлөгдөж болно)
+
+# 3) Схем нийлүүлж, жишээ өгөгдөл ачаалах
+bun run db:migrate
+bun run db:seed
+
+# 4) Апп асаах
+bun run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Туршилтын нэвтрэх эрх
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Seed өгөгдлийн бүх хэрэглэгчийн нууц үг: `organic2026`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Утас | Эрх |
+| --- | --- |
+| `85563793` | Админ |
+| `80000001` | Ресепшн — Olympic |
+| `80000002` | Ресепшн — River Plaza |
+| `80000003` | Ресепшн — Эрдэнэт |
 
-## Learn More
+## Шалгах командууд
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+bun run typecheck   # TypeScript
+bun run lint        # ESLint
+bun run verify      # Давхцлын шалгалтын 12 тест (өгөгдлийн сан ажиллаж байх ёстой)
+bun run build       # Production build
+bun run db:studio   # Өгөгдлийн санг харах
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Бүтэц
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+app/
+  (app)/              Нэвтэрсэн хэрэглэгчийн хэсэг (layout нь эрхийг шалгана)
+    calendar/         Хуанли — өдрийн grid ба 15/30 хоногийн тойм
+      actions.ts      Захиалга үүсгэх/засах/төлөв солих Server Actions
+    clients/          Үйлчлүүлэгчийн жагсаалт ба хайлт
+    services/         Үйлчилгээ, үнэ, хямдрал (админ засварлана)
+    packages/         Багц (админ засварлана)
+    staff/            Ажилтан, долоо хоногийн хуваарь, чөлөө
+    settings/         Салбар ба хэрэглэгч (зөвхөн админ)
+  login/              Нэвтрэх
+components/
+  app-rail.tsx        Зүүн талын icon цэс
+  brand.tsx           Логоны блок
+  calendar/           day-grid, appointment-dialog, calendar-header,
+                      calendar-stats, range-overview
+lib/
+  time.ts             UTC ↔ Улаанбаатар хөрвүүлэлт
+  appointments.ts     validateSlot — давхцал ба ажлын цагийн шалгалт
+  queries.ts          Унших асуулгууд
+  pricing.ts          Хямдрал, багц, хөнгөлөлтийн тооцоо
+  auth.ts / session.ts  Эрхийн шалгалт, сесс
+  preview.ts          «Ресепшн» урьдчилан харах горим (UI-д л нөлөөлнө)
+  labels.ts           Монгол шошго, төлөвийн өнгө
+prisma/
+  schema.prisma       Өгөгдлийн загвар
+  seed.ts             Жишээ өгөгдөл
+  verify-validation.mts  Давхцлын логикийн тест
+proxy.ts              Нэвтрээгүй хэрэглэгчийг чиглүүлэх (Next 16-д middleware → proxy)
+```
 
-## Deploy on Vercel
+## Хийгдээгүй / дараагийн алхам
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- Ажилтан нэмэх, хуваарь ба чөлөө бүртгэх UI
+- Салбарын тохиргоо засварлах дэлгэц
+- Захиалгыг чирж (drag & drop) цаг/ажилтан солих
+- Төлбөр, өдрийн касс, тайлан
+- SMS сануулга
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+> **Анхаар:** одоогийн үйлчилгээ, үнэ, ажилтны нэрс нь **жишээ өгөгдөл**.
+> Захиалагчийн бодит жагсаалтыг авсны дараа `prisma/seed.ts`-г солино.

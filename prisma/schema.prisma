@@ -1,0 +1,328 @@
+// Organic Care Nails & Spa — салон удирдлагын систем
+// Цагийн дүрэм: DateTime талбарууд БҮГД UTC-д хадгалагдана.
+//               Ажлын цаг (openMin/startMin гэх мэт) нь салоны ЛОКАЛ цагийн
+//               шөнө дундаас хойшх минут (Asia/Ulaanbaatar, UTC+8).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────── Тоглогдох утгууд ───────────────────────────
+
+/// Системд нэвтрэх хэрэглэгчийн эрх
+enum Role {
+  ADMIN     // Админ — бүх эрхтэй
+  RECEPTION // Ресепшн — бүх салбарын захиалга харна, тохиргоо өөрчлөхгүй
+}
+
+/// Цаг захиалгын төлөв
+enum AppointmentStatus {
+  BOOKED    // Захиалсан
+  CONFIRMED // Баталгаажсан
+  ARRIVED   // Ирсэн
+  COMPLETED // Дууссан
+  CANCELLED // Цуцалсан
+  NO_SHOW   // Ирээгүй
+}
+
+// ─────────────────────────────── Салбар ────────────────────────────────
+
+/// Салбар (Olympic, River Plaza, Эрдэнэт)
+model Branch {
+  id        String   @id @default(cuid())
+  name      String   @unique // "Olympic Residence"
+  address   String            // "Олимпийн ордон, 2 давхар"
+  phone     String?
+  /// Ажлын эхлэх цаг — локал минут (600 = 10:00)
+  openMin   Int      @default(600)
+  /// Ажлын дуусах цаг — локал минут (1140 = 19:00)
+  closeMin  Int      @default(1140)
+  /// Хуанлийн нүдний алхам, минутаар (15 эсвэл 30)
+  slotMin   Int      @default(15)
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staff        Staff[]
+  users        User[]
+  appointments Appointment[]
+  closures     BranchClosure[]
+
+  @@map("branches")
+}
+
+/// Салбарын амралтын / онцгой ажлын өдөр
+model BranchClosure {
+  id       String   @id @default(cuid())
+  branchId String
+  /// Аль өдөр (зөвхөн огноо, локал хуанлийн өдөр)
+  date     DateTime @db.Date
+  /// Хаалттай эсэх. false бол тухайн өдрийн онцгой ажлын цаг гэсэн үг.
+  isClosed Boolean  @default(true)
+  openMin  Int?
+  closeMin Int?
+  reason   String?  // "Шинэ жил", "Цагаан сар"
+
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@unique([branchId, date])
+  @@map("branch_closures")
+}
+
+// ──────────────────────────── Хэрэглэгч ────────────────────────────────
+
+/// Системд нэвтрэх хэрэглэгч (админ 1, ресепшн 3)
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  /// Нэвтрэх нэр — утасны дугаараар нэвтэрнэ
+  phone        String   @unique
+  passwordHash String
+  role         Role     @default(RECEPTION)
+  /// Үндсэн салбар. Ресепшн бүх салбарыг харна, энэ нь зөвхөн анхны сонголт.
+  branchId     String?
+  isActive     Boolean  @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  branch       Branch?       @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  sessions     Session[]
+  createdAppts Appointment[] @relation("AppointmentCreatedBy")
+
+  @@map("users")
+}
+
+/// Нэвтрэлтийн сесс (cookie дэх токены хэш)
+model Session {
+  id        String   @id @default(cuid())
+  /// Cookie-д өгсөн токены SHA-256 хэш
+  tokenHash String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+// ───────────────────────────── Ажилтан ─────────────────────────────────
+
+/// Ажилтан (маникюрист, мастер) — хуанлийн багана бүр нэг ажилтан
+model Staff {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String?
+  position  String?  // "Маникюрист", "Мастер"
+  branchId  String
+  /// Хуанли дээрх өнгө (hex)
+  color     String   @default("#94a3b8")
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  branch       Branch          @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  schedules    StaffSchedule[]
+  timeOffs     StaffTimeOff[]
+  appointments Appointment[]
+
+  @@index([branchId])
+  @@map("staff")
+}
+
+/// Ажилтны долоо хоног давтагдах үндсэн хуваарь
+model StaffSchedule {
+  id       String  @id @default(cuid())
+  staffId  String
+  /// 0 = Ням, 1 = Даваа … 6 = Бямба
+  weekday  Int
+  /// Амралтын өдөр эсэх. true бол startMin/endMin хэрэглэгдэхгүй.
+  isDayOff Boolean @default(false)
+  startMin Int     @default(600)
+  endMin   Int     @default(1140)
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, weekday])
+  @@map("staff_schedules")
+}
+
+/// Тодорхой өдрийн чөлөө / амралт (үндсэн хуваарийг дарна)
+model StaffTimeOff {
+  id       String   @id @default(cuid())
+  staffId  String
+  date     DateTime @db.Date
+  /// null бол бүтэн өдөр чөлөөтэй
+  startMin Int?
+  endMin   Int?
+  reason   String?  // "Чөлөө", "Өвчтэй", "Амралт"
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([staffId, date])
+  @@map("staff_time_offs")
+}
+
+// ──────────────────────────── Үйлчилгээ ────────────────────────────────
+
+/// Үйлчилгээний ангилал (Маникюр, Педикюр, Сормуус, Вакс, Спа)
+model ServiceCategory {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  color     String    @default("#a3a3a3")
+  sortOrder Int       @default(0)
+  services  Service[]
+
+  @@map("service_categories")
+}
+
+/// Үйлчилгээ + үнэ
+model Service {
+  id          String  @id @default(cuid())
+  categoryId  String
+  name        String
+  /// Үргэлжлэх хугацаа, минутаар
+  durationMin Int
+  /// Үнэ, төгрөгөөр
+  price       Int
+  /// Хямдралтай үнэ. Тавьсан ба хүчинтэй бол энэ үнээр бодогдоно.
+  salePrice   Int?
+  /// Хямдрал дуусах агшин (UTC). Хоосон бол хугацаагүй.
+  saleEndsAt  DateTime?
+  /// Хуанли дээрх өнгө (hex). Хоосон бол ангиллын өнгийг авна.
+  color       String?
+  isActive    Boolean @default(true)
+  sortOrder   Int     @default(0)
+
+  category ServiceCategory      @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  items    AppointmentService[]
+  packages PackageService[]
+
+  @@unique([categoryId, name])
+  @@index([categoryId])
+  @@map("services")
+}
+
+/// Багц — хэд хэдэн үйлчилгээг нэг тогтмол үнээр
+model Package {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  /// Багцын нийт үнэ. Дотоод үйлчилгээнүүдийн нийлбэрээс хямд байх нь ердийн.
+  price       Int
+  color       String?
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items        PackageService[]
+  appointments Appointment[]
+
+  @@map("packages")
+}
+
+/// Багцад орсон үйлчилгээ
+model PackageService {
+  id        String @id @default(cuid())
+  packageId String
+  serviceId String
+  sortOrder Int    @default(0)
+
+  package Package @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+
+  @@unique([packageId, serviceId])
+  @@index([packageId])
+  @@map("package_services")
+}
+
+// ─────────────────────────── Үйлчлүүлэгч ───────────────────────────────
+
+/// Үйлчлүүлэгч — нэр, утас, тэмдэглэл
+model Client {
+  id        String   @id @default(cuid())
+  name      String
+  /// Утасны дугаар — давхардахгүй, хайлтын түлхүүр
+  phone     String   @unique
+  /// Тэмдэглэл: хавчил, харшил, дуртай өнгө гэх мэт
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  appointments Appointment[]
+
+  @@index([name])
+  @@map("clients")
+}
+
+// ────────────────────────── Цаг захиалга ───────────────────────────────
+
+/// Цаг захиалга. startAt / endAt нь UTC.
+model Appointment {
+  id          String            @id @default(cuid())
+  branchId    String
+  staffId     String
+  clientId    String
+  /// Эхлэх цаг (UTC)
+  startAt     DateTime
+  /// Дуусах цаг (UTC) — үйлчилгээнүүдийн нийт хугацаагаар тооцно
+  endAt       DateTime
+  status      AppointmentStatus @default(BOOKED)
+  note        String?
+  /// Хэрэглэсэн багц (сонгосон бол)
+  packageId   String?
+  /// Үйлчилгээнүүдийн нийлбэр — хөнгөлөлтийн ӨМНӨХ дүн
+  subtotal    Int               @default(0)
+  /// Хөнгөлөлтийн дүн, төгрөгөөр (багцын хямдрал + гараар өгсөн хөнгөлөлт)
+  discount    Int               @default(0)
+  /// Хөнгөлөлтийн шалтгаан
+  discountNote String?
+  /// Эцсийн төлөх дүн = subtotal − discount
+  totalPrice  Int               @default(0)
+  createdById String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  branch    Branch               @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  staff     Staff                @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  client    Client               @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  pkg       Package?             @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  createdBy User?                @relation("AppointmentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  items     AppointmentService[]
+
+  // Хуанли татах гол индекс: салбар + өдрийн муж
+  @@index([branchId, startAt])
+  // Давхцал шалгах индекс: ажилтан + цагийн муж
+  @@index([staffId, startAt, endAt])
+  @@index([clientId])
+  @@map("appointments")
+}
+
+/// Нэг захиалганд орсон үйлчилгээ (олон үйлчилгээ авч болно).
+/// Үнэ/хугацааг захиалгын үед хуулж авна — дараа үнэ өөрчлөгдвөл түүх алдагдахгүй.
+model AppointmentService {
+  id            String @id @default(cuid())
+  appointmentId String
+  serviceId     String
+  /// Захиалгын үеийн нэр (үйлчилгээ уствал ч түүх үлдэнэ)
+  name          String
+  price         Int
+  durationMin   Int
+  sortOrder     Int    @default(0)
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  service     Service     @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+
+  @@index([appointmentId])
+  @@map("appointment_services")
+}

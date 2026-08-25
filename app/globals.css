@@ -1,26 +1,96 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* ── Дизайн систем ────────────────────────────────────────────────────
+   Дулаан цайвар суурь, гүн ногоон брэнд өнгө, намуухан спа өнгөний багц.
+   Хуанлийн блокийн өнгө нь ҮЙЛЧИЛГЭЭНИЙ АНГИЛЛААС тодорхойлогдоно. */
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-serif-src), ui-serif, Georgia, serif;
+  --font-mono: var(--font-mono-jet), ui-monospace, SFMono-Regular, monospace;
+
+  /* Брэндийн гүн ногоон — хажуугийн самбар, үндсэн товч */
+  --color-brand-50: #f1f4f1;
+  --color-brand-100: #dee6e0;
+  --color-brand-200: #bcccc0;
+  --color-brand-300: #8faa96;
+  --color-brand-400: #64876e;
+  --color-brand-500: #4a6b53;
+  --color-brand-600: #3e5a47;
+  --color-brand-700: #354b3c;
+  --color-brand-800: #2d3f33;
+  --color-brand-900: #26352b;
+
+  /* Дулаан саарал — суурь, хүрээ, туслах текст */
+  --color-sand-50: #fdfcfa;
+  --color-sand-100: #faf9f6;
+  --color-sand-200: #eeebe5;
+  --color-sand-300: #ddd8cf;
+  --color-sand-400: #b8b2a6;
+  --color-sand-500: #8f8a7f;
+  --color-sand-600: #6b675e;
+  --color-sand-700: #4d4a43;
+  --color-sand-800: #34322d;
+  --color-sand-900: #22201d;
+
+  /* Хуудасны гадна тал — агуулга үүн дээр хөвж харагдана */
+  --color-shell: #e9e6e0;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  height: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--color-shell);
+  color: var(--color-sand-900);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Нарийн, намуухан scrollbar */
+.scrollbar-slim {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-sand-300) transparent;
+}
+.scrollbar-slim::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+.scrollbar-slim::-webkit-scrollbar-thumb {
+  background-color: var(--color-sand-300);
+  border-radius: 9999px;
+  border: 3.5px solid transparent;
+  background-clip: content-box;
+}
+.scrollbar-slim::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-sand-400);
+}
+
+/* Ирээгүй захиалгын ташуу зураас */
+.hatched {
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 5px,
+    rgb(0 0 0 / 0.045) 5px,
+    rgb(0 0 0 / 0.045) 10px
+  );
+}
+
+/* Ажилтны амралтын өдрийн сүүдэр */
+.day-off-shade {
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 7px,
+    var(--color-sand-200) 7px,
+    var(--color-sand-200) 14px
+  );
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
 }
