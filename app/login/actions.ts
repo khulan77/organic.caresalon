@@ -4,6 +4,13 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { verifyPassword } from "@/lib/password";
 import { createSession, destroySession, pruneExpiredSessions } from "@/lib/session";
+import {
+  clearLoginFailures,
+  loginBlockMessage,
+  loginBlockSeconds,
+  loginLimits,
+  recordLoginFailure,
+} from "@/lib/login-limit";
 
 export type LoginState = { error?: string };
 
@@ -23,6 +30,13 @@ export async function login(
     return { error: "Утасны дугаар болон нууц үгээ оруулна уу." };
   }
 
+  // Хэт олон буруу оролдлого хийсэн бол нууц үгийг шалгах хүртэл ч явахгүй.
+  const limits = await loginLimits(phone);
+  const blockedFor = await loginBlockSeconds(limits);
+  if (blockedFor !== null) {
+    return { error: loginBlockMessage(blockedFor) };
+  }
+
   const user = await prisma.user.findUnique({
     where: { phone },
     select: { id: true, passwordHash: true, isActive: true },
@@ -36,12 +50,15 @@ export async function login(
   const ok = await verifyPassword(password, hash);
 
   if (!user || !ok) {
+    await recordLoginFailure(limits);
     return { error: "Утасны дугаар эсвэл нууц үг буруу байна." };
   }
+  // Нууц үг зөв байсан тул идэвхгүй бүртгэлийг буруу оролдлогод тооцохгүй.
   if (!user.isActive) {
     return { error: "Таны бүртгэл идэвхгүй болсон байна. Админд хандана уу." };
   }
 
+  await clearLoginFailures(phone);
   await pruneExpiredSessions();
   await createSession(user.id);
   await prisma.user.update({

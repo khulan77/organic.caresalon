@@ -165,13 +165,16 @@ lib/
   queries.ts          Унших асуулгууд
   pricing.ts          Хямдрал, багц, хөнгөлөлтийн тооцоо
   auth.ts / session.ts  Эрхийн шалгалт, сесс
+  session-token.ts    Сессийн cookie-ийн нэр, хугацаа, хэш (proxy-той хамтран хэрэглэнэ)
+  login-limit.ts      Нэвтрэх оролдлогын хязгаар (brute force хамгаалалт)
   preview.ts          «Ресепшн» урьдчилан харах горим (UI-д л нөлөөлнө)
   labels.ts           Монгол шошго, төлөвийн өнгө
 prisma/
   schema.prisma       Өгөгдлийн загвар
   seed.ts             Жишээ өгөгдөл
   verify-validation.mts  Давхцлын логикийн тест
-proxy.ts              Нэвтрээгүй хэрэглэгчийг чиглүүлэх (Next 16-д middleware → proxy)
+proxy.ts              Нэвтрээгүй хэрэглэгчийг чиглүүлэх + идэвхтэй сессийг сунгах
+                      (Next 16-д middleware → proxy)
 ```
 
 ## Хийгдээгүй / дараагийн алхам

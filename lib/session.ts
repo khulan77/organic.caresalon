@@ -1,18 +1,17 @@
 import "server-only";
 
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import { cache } from "react";
 import { prisma } from "@/lib/prisma";
-
-const COOKIE_NAME = "oc_session";
-/** Сессийн хүчинтэй хугацаа — 30 хоног. */
-const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-
-/** Cookie-д очих токеныг өгөгдлийн санд хадгалахын өмнө хэшлэнэ. */
-function hashToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
+import {
+  SESSION_COOKIE,
+  SESSION_RENEW_COOKIE,
+  SESSION_TTL_MS,
+  hashToken,
+  nextRenewAt,
+  sessionCookieOptions,
+} from "@/lib/session-token";
 
 /** Нэвтэрсэн хэрэглэгчийн мэдээлэл — нууц үгийн хэш ЭНД ОРОХГҮЙ. */
 export type CurrentUser = {
@@ -38,26 +37,23 @@ export async function createSession(userId: string): Promise<void> {
   });
 
   const store = await cookies();
-  store.set(COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    expires: expiresAt,
-  });
+  const options = sessionCookieOptions(expiresAt);
+  store.set(SESSION_COOKIE, token, options);
+  store.set(SESSION_RENEW_COOKIE, nextRenewAt(), options);
 }
 
 /** Сессийг устгаж cookie-г арилгана. */
 export async function destroySession(): Promise<void> {
   const store = await cookies();
-  const token = store.get(COOKIE_NAME)?.value;
+  const token = store.get(SESSION_COOKIE)?.value;
 
   if (token) {
     await prisma.session
       .deleteMany({ where: { tokenHash: hashToken(token) } })
       .catch(() => undefined);
   }
-  store.delete(COOKIE_NAME);
+  store.delete(SESSION_COOKIE);
+  store.delete(SESSION_RENEW_COOKIE);
 }
 
 /**
@@ -66,7 +62,7 @@ export async function destroySession(): Promise<void> {
  */
 export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   const store = await cookies();
-  const token = store.get(COOKIE_NAME)?.value;
+  const token = store.get(SESSION_COOKIE)?.value;
   if (!token) return null;
 
   const session = await prisma.session.findUnique({
