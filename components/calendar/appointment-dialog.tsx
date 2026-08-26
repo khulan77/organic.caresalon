@@ -1,6 +1,8 @@
 "use client";
 
 import {
+  Fragment,
+  startTransition,
   useActionState,
   useEffect,
   useMemo,
@@ -15,16 +17,27 @@ import type {
 } from "@/lib/queries";
 import { STATUS_LABELS, formatDuration, formatPrice } from "@/lib/labels";
 import { effectivePrice, isSaleActive } from "@/lib/pricing";
-import { formatMinutes, toLocalMinutes } from "@/lib/time";
+import { formatMinutes, toDateKey, toLocalMinutes } from "@/lib/time";
 import {
+  addPayment,
   createAppointment,
   deleteAppointment,
+  deletePayment,
   findClients,
   setAppointmentStatus,
   updateAppointment,
 } from "@/app/(app)/calendar/actions";
+import {
+  PAYMENT_METHODS,
+  PAYMENT_METHOD_LABELS,
+  PAYMENT_STATE_LABELS,
+  summarize,
+} from "@/lib/payments";
 import type { ActionResult } from "@/lib/action-result";
-import type { AppointmentStatus } from "@/lib/generated/prisma/enums";
+import type {
+  AppointmentStatus,
+  PaymentMethod,
+} from "@/lib/generated/prisma/enums";
 import { Field, Issues, inputClass } from "@/components/ui/form";
 
 export type DialogState =
@@ -39,7 +52,17 @@ export type DialogState =
       mode: "edit";
       branchId: string;
       dateKey: string;
+      /** Бүлгийн ҮНДСЭН мөр — нэмэлт төлбөр, төлбөр энд наалддаг */
       appointment: DayAppointment;
+      /** Бүлгийн бүх мөр (ганц захиалга бол ганц элемент) */
+      siblings: DayAppointment[];
+      /** Цуцлагдсан бол тэр цагийг дараа нь авсан захиалга */
+      replacement: {
+        clientName: string;
+        startMin: number;
+        endMin: number;
+        bookedAt: Date;
+      } | null;
     };
 
 type ClientOption = {
@@ -54,6 +77,8 @@ type Props = {
   staff: DayStaff[];
   catalog: ServiceCatalog;
   packages: PackageList;
+  /** Худал бол зөвхөн харах — бүх талбар идэвхгүй, хадгалах товч гарахгүй */
+  canWrite: boolean;
   onClose: () => void;
 };
 
@@ -71,9 +96,13 @@ export function AppointmentDialog({
   staff,
   catalog,
   packages,
+  canWrite,
   onClose,
 }: Props) {
   const editing = state.mode === "edit" ? state.appointment : null;
+  /** Бүлгийн бүх мөр — үйлчилгээ, хөнгөлөлт бүгдийг эндээс цуглуулна. */
+  const siblings = state.mode === "edit" ? state.siblings : [];
+  const replacement = state.mode === "edit" ? state.replacement : null;
 
   const allServices = useMemo(
     () => catalog.flatMap((category) => category.services),
@@ -103,15 +132,34 @@ export function AppointmentDialog({
    */
   const [extraIds, setExtraIds] = useState<string[]>(() => {
     if (!editing) return [];
-    const booked = editing.items
-      .map((item) => allServices.find((s) => s.name === item.name)?.id)
-      .filter((id): id is string => Boolean(id));
+    const booked = siblings.flatMap((sibling) =>
+      sibling.items
+        .map((item) => allServices.find((s) => s.name === item.name)?.id)
+        .filter((id): id is string => Boolean(id)),
+    );
     const inPackage =
       packages
         .find((p) => p.id === editing.packageId)
         ?.items.map((item) => item.serviceId) ?? [];
     return booked.filter((id) => !inPackage.includes(id));
   });
+
+  /**
+   * Үйлчилгээ бүрийг ХЭН хийх. Энд байхгүй үйлчилгээ үндсэн ажилтанд очно.
+   * Засварлах үед бүлгийн мөр бүрээс нь буцаан уншина.
+   */
+  const [serviceStaff, setServiceStaff] = useState<Record<string, string>>(
+    () => {
+      const map: Record<string, string> = {};
+      for (const sibling of siblings) {
+        for (const item of sibling.items) {
+          const service = allServices.find((s) => s.name === item.name);
+          if (service) map[service.id] = sibling.staffId;
+        }
+      }
+      return map;
+    },
+  );
 
   // Сервер рүү явах эцсийн жагсаалт — багцынх урд, нэмэлт нь ард
   const serviceIds = useMemo(
@@ -122,14 +170,37 @@ export function AppointmentDialog({
     [packageServiceIds, extraIds],
   );
 
+  const [primaryStaffId, setPrimaryStaffId] = useState(
+    state.mode === "edit" ? state.appointment.staffId : state.staffId,
+  );
+
+  /** Үйлчилгээг хэн хийх — хуваарилагдаагүй бол үндсэн ажилтан. */
+  function staffOf(serviceId: string): string {
+    return serviceStaff[serviceId] ?? primaryStaffId;
+  }
+
   const selectedServices = serviceIds
     .map((id) => allServices.find((s) => s.id === id))
     .filter((s): s is (typeof allServices)[number] => Boolean(s));
 
-  const totalDuration = selectedServices.reduce(
-    (sum, s) => sum + s.durationMin,
+  /** Ажилтан тус бүрийн хугацаа — хэд хэдэн ажилтан зэрэг ажиллаж болно. */
+  const durationByStaff = new Map<string, number>();
+  for (const service of selectedServices) {
+    const id = staffOf(service.id);
+    durationByStaff.set(id, (durationByStaff.get(id) ?? 0) + service.durationMin);
+  }
+
+  /**
+   * Бүлгийн хугацаа = ХАМГИЙН УРТ ажилтных (сервертэй ижил дүрэм).
+   * Зэрэг эхэлж зэрэг дуусна.
+   */
+  const totalDuration = [...durationByStaff.values()].reduce(
+    (max, value) => Math.max(max, value),
     0,
   );
+
+  /** Хэдэн ажилтан оролцож байгаа — хуваарилалтын хэсгийг харуулах эсэхэд. */
+  const involvedStaffIds = [...durationByStaff.keys()];
   const subtotal = selectedServices.reduce(
     (sum, s) => sum + effectivePrice(s),
     0,
@@ -145,7 +216,9 @@ export function AppointmentDialog({
 
   // Хадгалсан хөнгөлөлтөөс багцынхыг хассан үлдэгдэл нь гараар өгсөн хөнгөлөлт
   const [manualDiscount, setManualDiscount] = useState<string>(() => {
-    if (!editing || editing.discount <= 0) return "";
+    // Хөнгөлөлт бүлгийн мөрүүдэд хуваарилагдсан байдаг — нийлбэрээр нь буцаана
+    const groupDiscount = siblings.reduce((sum, row) => sum + row.discount, 0);
+    if (!editing || groupDiscount <= 0) return "";
     const fromPackage = editing.packageId
       ? (packages
           .find((p) => p.id === editing.packageId)
@@ -155,13 +228,61 @@ export function AppointmentDialog({
           ) ?? 0) -
         (packages.find((p) => p.id === editing.packageId)?.price ?? 0)
       : 0;
-    const manual = editing.discount - Math.max(0, fromPackage);
+    const manual = groupDiscount - Math.max(0, fromPackage);
     return manual > 0 ? String(manual) : "";
   });
   const manual = Number(manualDiscount.replace(/\D/g, "")) || 0;
 
+  /**
+   * Нэмэлт төлбөр — формын төлөвт барина. Хадгалахад бүхэлд нь дахин бичигдэнэ.
+   * `key` нь зөвхөн React-ийн жагсаалтад зориулсан, сервер рүү явахгүй.
+   */
+  const [charges, setCharges] = useState<
+    { key: string; label: string; amount: string }[]
+  >(() =>
+    editing
+      ? editing.charges.map((charge) => ({
+          key: charge.id,
+          label: charge.label,
+          amount: String(charge.amount),
+        }))
+      : [],
+  );
+
+  const extraTotal = charges.reduce(
+    (sum, charge) => sum + (Number(charge.amount.replace(/\D/g, "")) || 0),
+    0,
+  );
+
+  // Хөнгөлөлт нь үйлчилгээний дүнгээс хэтрэхгүй (сервертэй ижил дүрэм)
   const discount = Math.min(subtotal, packageDiscount + manual);
-  const totalPrice = subtotal - discount;
+  const totalPrice = subtotal + extraTotal - discount;
+
+  // ── Төлбөрийн байдал (зөвхөн засварлах үед — шинэ захиалга хараахан байхгүй)
+  const payments = editing?.payments ?? [];
+  const money = summarize({ totalPrice, payments });
+
+  function addChargeRow() {
+    setCharges((current) => [
+      ...current,
+      { key: `new-${Date.now()}-${current.length}`, label: "", amount: "" },
+    ]);
+  }
+
+  function updateChargeRow(
+    key: string,
+    patch: Partial<{ label: string; amount: string }>,
+  ) {
+    setCharges((current) =>
+      current.map((charge) =>
+        charge.key === key ? { ...charge, ...patch } : charge,
+      ),
+    );
+  }
+
+  function removeChargeRow(key: string) {
+    setCharges((current) => current.filter((charge) => charge.key !== key));
+  }
 
   const action = state.mode === "create" ? createAppointment : updateAppointment;
   const [result, formAction, isPending] = useActionState<
@@ -185,8 +306,6 @@ export function AppointmentDialog({
     state.mode === "edit"
       ? toLocalMinutes(state.appointment.startAt)
       : state.startMin;
-  const defaultStaffId =
-    state.mode === "edit" ? state.appointment.staffId : state.staffId;
 
   function toggleService(id: string) {
     // Багцын бүрэлдэхүүнийг тусад нь салгахгүй — багцаа болиулж салгана
@@ -211,16 +330,22 @@ export function AppointmentDialog({
         role="dialog"
         aria-modal="true"
         aria-label={
-          state.mode === "create" ? "Шинэ цаг захиалга" : "Цаг захиалга засах"
+          !canWrite
+            ? "Цаг захиалгын дэлгэрэнгүй"
+            : state.mode === "create"
+              ? "Шинэ цаг захиалга"
+              : "Цаг захиалга засах"
         }
         className="relative flex max-h-[92vh] w-full max-w-2xl flex-col rounded-t-2xl bg-white shadow-xl sm:rounded-2xl"
       >
         <header className="flex shrink-0 items-start justify-between gap-3 border-b border-sand-200 px-5 py-4">
           <div>
             <h2 className="font-serif text-lg text-sand-900">
-              {state.mode === "create"
-                ? "Шинэ цаг захиалга"
-                : "Цаг захиалга засах"}
+              {!canWrite
+                ? "Цаг захиалга"
+                : state.mode === "create"
+                  ? "Шинэ цаг захиалга"
+                  : "Цаг захиалга засах"}
             </h2>
             {editing ? (
               <span
@@ -255,15 +380,29 @@ export function AppointmentDialog({
           {packageId ? (
             <input type="hidden" name="packageId" value={packageId} />
           ) : null}
+          {/* Үйлчилгээ ба түүнийг хийх ажилтан — сервер индексээр нь хослуулна */}
           {serviceIds.map((id) => (
-            <input key={id} type="hidden" name="serviceIds" value={id} />
+            <Fragment key={id}>
+              <input type="hidden" name="serviceIds" value={id} />
+              <input type="hidden" name="serviceStaffId" value={staffOf(id)} />
+            </Fragment>
           ))}
           <input type="hidden" name="discount" value={String(manual)} />
           {selectedClient && !creatingClient ? (
             <input type="hidden" name="clientId" value={selectedClient.id} />
           ) : null}
 
-          <div className="space-y-5 px-5 py-4">
+          <fieldset
+            disabled={!canWrite}
+            className="min-w-0 space-y-5 px-5 py-4 disabled:opacity-90"
+          >
+            {!canWrite ? (
+              <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-amber-200">
+                Өөр салбарын захиалга — зөвхөн харна. Өөрчлөх бол тухайн
+                салбарын ресепшн эсвэл админд хандана уу.
+              </p>
+            ) : null}
+
             {/* Үйлчлүүлэгч */}
             <section>
               <SectionTitle>Үйлчлүүлэгч</SectionTitle>
@@ -413,10 +552,18 @@ export function AppointmentDialog({
 
             {/* Ажилтан, огноо, цаг */}
             <section className="grid gap-3 sm:grid-cols-3">
-              <Field label="Ажилтан">
+              <Field
+                label="Үндсэн ажилтан"
+                hint={
+                  involvedStaffIds.length > 1
+                    ? "Нэхэмжлэх энэ ажилтны мөрөнд наалдана"
+                    : undefined
+                }
+              >
                 <select
                   name="staffId"
-                  defaultValue={defaultStaffId}
+                  value={primaryStaffId}
+                  onChange={(event) => setPrimaryStaffId(event.target.value)}
                   className={inputClass}
                 >
                   {staff.map((member) => (
@@ -447,20 +594,154 @@ export function AppointmentDialog({
               </Field>
             </section>
 
+            {/* Ажилтны хуваарилалт — 2+ ажилтантай салбарт л утга учиртай */}
+            {selectedServices.length > 0 && staff.length > 1 ? (
+              <section className="rounded-xl border border-sand-200 p-3">
+                <SectionTitle>Хэн хийх</SectionTitle>
+                <p className="mb-2 text-xs text-sand-500">
+                  Хоёр ажилтан зэрэг үйлчилбэл цаг нь зэрэг эхэлж зэрэг дуусна.
+                </p>
+                <div className="space-y-2">
+                  {selectedServices.map((service) => (
+                    <div
+                      key={service.id}
+                      className="flex flex-wrap items-center gap-2 text-sm"
+                    >
+                      <span className="min-w-[8rem] flex-1 truncate text-sand-800">
+                        {service.name}
+                        <span className="ml-1.5 text-xs text-sand-400">
+                          {formatDuration(service.durationMin)}
+                        </span>
+                      </span>
+                      <select
+                        value={staffOf(service.id)}
+                        onChange={(event) =>
+                          setServiceStaff((current) => ({
+                            ...current,
+                            [service.id]: event.target.value,
+                          }))
+                        }
+                        aria-label={`${service.name} — ажилтан`}
+                        className={`${inputClass} w-full shrink-0 sm:w-40`}
+                      >
+                        {staff.map((member) => (
+                          <option key={member.id} value={member.id}>
+                            {member.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+
+                {involvedStaffIds.length > 1 ? (
+                  <ul className="mt-3 space-y-1 border-t border-sand-100 pt-2 text-xs text-sand-600">
+                    {involvedStaffIds.map((id) => {
+                      const member = staff.find((m) => m.id === id);
+                      const own = durationByStaff.get(id) ?? 0;
+                      return (
+                        <li key={id} className="flex justify-between gap-2">
+                          <span className="truncate">{member?.name ?? "—"}</span>
+                          <span className="shrink-0 tabular-nums">
+                            {formatDuration(own)}
+                            {own < totalDuration
+                              ? ` · +${formatDuration(totalDuration - own)} хүлээнэ`
+                              : ""}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : null}
+              </section>
+            ) : null}
+
             {totalDuration > 0 ? (
               <p className="rounded-lg bg-sand-100/70 px-3 py-2 text-sm text-sand-600">
                 Дуусах цаг:{" "}
                 <strong className="tabular-nums text-sand-900">
                   {formatMinutes(defaultStartMin + totalDuration)}
                 </strong>{" "}
-                (нийт {formatDuration(totalDuration)})
+                (нийт {formatDuration(totalDuration)}
+                {involvedStaffIds.length > 1
+                  ? `, ${involvedStaffIds.length} ажилтан зэрэг`
+                  : ""}
+                )
               </p>
             ) : null}
 
-            {/* Хөнгөлөлт ба тооцоо */}
+            {/* Нэмэлт төлбөр, хөнгөлөлт ба тооцоо */}
             {selectedServices.length > 0 ? (
               <section className="rounded-xl border border-sand-200 p-3">
-                <div className="sm:max-w-xs">
+                {/* ── Нэмэлт төлбөр ── */}
+                <div className="mb-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium text-sand-800">
+                      Нэмэлт төлбөр
+                    </span>
+                    <button
+                      type="button"
+                      onClick={addChargeRow}
+                      className="rounded-lg border border-sand-300 px-2.5 py-1 text-xs text-sand-700 transition hover:bg-sand-100"
+                    >
+                      + Нэмэх
+                    </button>
+                  </div>
+
+                  {charges.length === 0 ? (
+                    <p className="text-xs text-sand-500">
+                      Урт хумс, нэмэлт чимэглэл гэх мэт үйлчилгээний жагсаалтад
+                      байхгүй төлбөрийг энд нэмнэ.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {charges.map((charge) => (
+                        <div
+                          key={charge.key}
+                          className="flex flex-wrap items-center gap-2"
+                        >
+                          <input
+                            type="text"
+                            name="chargeLabel"
+                            value={charge.label}
+                            onChange={(event) =>
+                              updateChargeRow(charge.key, {
+                                label: event.target.value,
+                              })
+                            }
+                            placeholder="Юуны төлбөр"
+                            maxLength={80}
+                            className={`${inputClass} min-w-[8rem] flex-1`}
+                          />
+                          <input
+                            type="number"
+                            name="chargeAmount"
+                            min={0}
+                            step={1000}
+                            value={charge.amount}
+                            onChange={(event) =>
+                              updateChargeRow(charge.key, {
+                                amount: event.target.value,
+                              })
+                            }
+                            placeholder="0"
+                            className={`${inputClass} w-28 shrink-0 text-right`}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeChargeRow(charge.key)}
+                            aria-label="Нэмэлт төлбөр хасах"
+                            className="shrink-0 rounded-lg p-1.5 text-sand-400 transition hover:bg-sand-100 hover:text-sand-800"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="border-t border-sand-100 pt-3 sm:max-w-xs">
                   <Field label="Нэмэлт хөнгөлөлт (₮)" hint="Тохиролцсон хямдрал">
                     <input
                       type="number"
@@ -475,7 +756,13 @@ export function AppointmentDialog({
                 </div>
 
                 <dl className="mt-3 space-y-1 border-t border-sand-100 pt-3 text-sm">
-                  <Row label="Дүн" value={formatPrice(subtotal)} />
+                  <Row label="Үйлчилгээ" value={formatPrice(subtotal)} />
+                  {extraTotal > 0 ? (
+                    <Row
+                      label="Нэмэлт төлбөр"
+                      value={`+ ${formatPrice(extraTotal)}`}
+                    />
+                  ) : null}
                   {packageDiscount > 0 && activePackage ? (
                     <Row
                       label={`Багц: ${activePackage.name}`}
@@ -498,6 +785,47 @@ export function AppointmentDialog({
               </section>
             ) : null}
 
+            {/* Төлбөр */}
+            {editing ? (
+              <PaymentSection
+                appointmentId={editing.id}
+                payments={payments}
+                money={money}
+                totalPrice={totalPrice}
+              />
+            ) : selectedServices.length > 0 ? (
+              <section className="rounded-xl border border-sand-200 p-3">
+                <SectionTitle>Урьдчилгаа</SectionTitle>
+                <p className="mb-2 text-xs text-sand-500">
+                  Захиалахдаа урьдчилж авсан төлбөр байвал энд бичнэ. Үлдэгдлийг
+                  дараа нь захиалгын цонхноос бүртгэнэ.
+                </p>
+                <div className="flex flex-wrap gap-2 sm:max-w-md">
+                  <input
+                    type="number"
+                    name="depositAmount"
+                    min={0}
+                    max={totalPrice}
+                    step={1000}
+                    placeholder="0"
+                    className={`${inputClass} min-w-[7rem] flex-1 text-right`}
+                  />
+                  <select
+                    name="depositMethod"
+                    defaultValue="CASH"
+                    aria-label="Төлбөрийн хэлбэр"
+                    className={`${inputClass} w-32 shrink-0`}
+                  >
+                    {PAYMENT_METHODS.map((method) => (
+                      <option key={method} value={method}>
+                        {PAYMENT_METHOD_LABELS[method]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </section>
+            ) : null}
+
             {/* Тэмдэглэл */}
             <Field label="Тэмдэглэл">
               <textarea
@@ -512,9 +840,13 @@ export function AppointmentDialog({
             {result && !result.ok ? <Issues issues={result.issues} /> : null}
 
             {editing ? (
-              <StatusControls appointment={editing} onDone={onClose} />
+              <StatusControls
+                appointment={editing}
+                replacement={replacement}
+                onDone={onClose}
+              />
             ) : null}
-          </div>
+          </fieldset>
 
           <footer className="sticky bottom-0 flex shrink-0 items-center justify-between gap-3 border-t border-sand-200 bg-white px-5 py-3">
             <div className="text-sm">
@@ -539,19 +871,21 @@ export function AppointmentDialog({
                 onClick={onClose}
                 className="rounded-xl border border-sand-300 px-4 py-2 text-sm text-sand-700 transition hover:bg-sand-100"
               >
-                Болих
+                {canWrite ? "Болих" : "Хаах"}
               </button>
-              <button
-                type="submit"
-                disabled={isPending || serviceIds.length === 0}
-                className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700 disabled:opacity-50"
-              >
-                {isPending
-                  ? "Хадгалж байна…"
-                  : state.mode === "create"
-                    ? "Захиалах"
-                    : "Хадгалах"}
-              </button>
+              {canWrite ? (
+                <button
+                  type="submit"
+                  disabled={isPending || serviceIds.length === 0}
+                  className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700 disabled:opacity-50"
+                >
+                  {isPending
+                    ? "Хадгалж байна…"
+                    : state.mode === "create"
+                      ? "Захиалах"
+                      : "Хадгалах"}
+                </button>
+              ) : null}
             </div>
           </footer>
         </form>
@@ -576,6 +910,187 @@ function Row({
         {value}
       </dd>
     </div>
+  );
+}
+
+/**
+ * Төлбөрийн хэсэг — бүртгэсэн төлбөрүүд ба шинээр авах талбар.
+ *
+ * Гол формын ДОТОР байрлах тул энд <form> ҮҮСГЭХГҮЙ (HTML-д form дотор form
+ * байж болохгүй). Оронд нь FormData-г гараар угсарч action-ыг дуудна.
+ */
+function PaymentSection({
+  appointmentId,
+  payments,
+  money,
+  totalPrice,
+}: {
+  appointmentId: string;
+  payments: DayAppointment["payments"];
+  money: ReturnType<typeof summarize>;
+  totalPrice: number;
+}) {
+  const [result, formAction, isPending] = useActionState<
+    ActionResult | null,
+    FormData
+  >(addPayment, null);
+
+  const [amount, setAmount] = useState("");
+  const [method, setMethod] = useState<PaymentMethod>("CASH");
+  const [isDeposit, setIsDeposit] = useState(false);
+  const [isRemoving, startRemove] = useTransition();
+
+  // Амжилттай бүртгэсний дараа талбарыг цэвэрлэнэ.
+  // Effect биш — рендерийн үед өмнөх үртэй харьцуулж тохируулна (React-ийн
+  // «adjusting state during render» загвар), ингэснээр нэмэлт дүрслэл гарахгүй.
+  const [seenResult, setSeenResult] = useState(result);
+  if (result !== seenResult) {
+    setSeenResult(result);
+    if (result?.ok) setAmount("");
+  }
+
+  const state = PAYMENT_STATE_LABELS[money.state];
+  const due = Math.max(0, money.balance);
+
+  function submit() {
+    const data = new FormData();
+    data.set("appointmentId", appointmentId);
+    data.set("amount", amount);
+    data.set("method", method);
+    if (isDeposit) data.set("isDeposit", "on");
+    startTransition(() => formAction(data));
+  }
+
+  return (
+    <section className="rounded-xl border border-sand-200 p-3">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <SectionTitle>Төлбөр</SectionTitle>
+        <span
+          className="rounded-full px-2 py-0.5 text-xs font-medium"
+          style={{ backgroundColor: state.bg, color: state.color }}
+        >
+          {state.label}
+          {money.hasDeposit && money.state === "PARTIAL"
+            ? " · урьдчилгаатай"
+            : ""}
+        </span>
+      </div>
+
+      <dl className="mb-3 space-y-1 text-sm">
+        <Row label="Төлөх дүн" value={formatPrice(totalPrice)} />
+        <Row label="Төлсөн" value={formatPrice(money.paid)} accent />
+        <div className="flex justify-between border-t border-sand-100 pt-1 font-semibold text-sand-900">
+          <dt>{money.balance < 0 ? "Илүү төлсөн" : "Үлдэгдэл"}</dt>
+          <dd className="tabular-nums">
+            {formatPrice(Math.abs(money.balance))}
+          </dd>
+        </div>
+      </dl>
+
+      {payments.length > 0 ? (
+        <ul className="mb-3 divide-y divide-sand-100 border-t border-sand-100">
+          {payments.map((payment) => (
+            <li
+              key={payment.id}
+              className="flex flex-wrap items-center gap-x-2 gap-y-0.5 py-1.5 text-sm"
+            >
+              <span className="w-24 shrink-0 tabular-nums font-medium text-sand-900">
+                {formatPrice(payment.amount)}
+              </span>
+              <span className="shrink-0 text-xs text-sand-500">
+                {PAYMENT_METHOD_LABELS[payment.method]}
+              </span>
+              {payment.isDeposit ? (
+                <span className="shrink-0 rounded bg-sand-200 px-1.5 py-0.5 text-[11px] text-sand-700">
+                  урьдчилгаа
+                </span>
+              ) : null}
+              <span className="min-w-[10rem] flex-1 truncate text-xs text-sand-400">
+                {toDateKey(payment.createdAt)}
+                {payment.receivedBy ? ` · ${payment.receivedBy.name}` : ""}
+                {payment.note ? ` · ${payment.note}` : ""}
+              </span>
+              <button
+                type="button"
+                disabled={isRemoving}
+                onClick={() =>
+                  startRemove(async () => {
+                    await deletePayment(payment.id);
+                  })
+                }
+                aria-label="Төлбөр устгах"
+                className="shrink-0 rounded-lg p-1 text-sand-400 transition hover:bg-sand-100 hover:text-[#9a5555] disabled:opacity-50"
+              >
+                ✕
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {/* ── Шинэ төлбөр ── */}
+      <div className="space-y-2 border-t border-sand-100 pt-3">
+        <div className="flex flex-wrap gap-2">
+          <input
+            type="number"
+            step={1000}
+            value={amount}
+            onChange={(event) => setAmount(event.target.value)}
+            placeholder={due > 0 ? String(due) : "0"}
+            aria-label="Төлбөрийн дүн"
+            className={`${inputClass} min-w-[7rem] flex-1 text-right`}
+          />
+          <select
+            value={method}
+            onChange={(event) =>
+              setMethod(event.target.value as PaymentMethod)
+            }
+            aria-label="Төлбөрийн хэлбэр"
+            className={`${inputClass} w-32 shrink-0`}
+          >
+            {PAYMENT_METHODS.map((option) => (
+              <option key={option} value={option}>
+                {PAYMENT_METHOD_LABELS[option]}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-sand-700">
+            <input
+              type="checkbox"
+              checked={isDeposit}
+              onChange={(event) => setIsDeposit(event.target.checked)}
+              className="size-4 rounded border-sand-300"
+            />
+            Урьдчилгаа
+          </label>
+
+          <div className="flex gap-2">
+            {due > 0 ? (
+              <button
+                type="button"
+                onClick={() => setAmount(String(due))}
+                className="rounded-lg border border-sand-300 px-2.5 py-1.5 text-xs text-sand-700 transition hover:bg-sand-100"
+              >
+                Үлдэгдлийг бүтнээр
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={submit}
+              disabled={isPending || !amount}
+              className="rounded-lg bg-sand-800 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-sand-900 disabled:opacity-50"
+            >
+              {isPending ? "Бүртгэж байна…" : "Төлбөр бүртгэх"}
+            </button>
+          </div>
+        </div>
+
+        {result && !result.ok ? <Issues issues={result.issues} /> : null}
+      </div>
+    </section>
   );
 }
 
@@ -727,19 +1242,44 @@ function ClientPicker({
 /** Захиалгын төлөв солих ба устгах. */
 function StatusControls({
   appointment,
+  replacement,
   onDone,
 }: {
   appointment: DayAppointment;
+  replacement: {
+    clientName: string;
+    startMin: number;
+    endMin: number;
+    bookedAt: Date;
+  } | null;
   onDone: () => void;
 }) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  /** Цуцлах/ирээгүй болгохын өмнө шалтгаан асуух үе шат. */
+  const [pendingCancel, setPendingCancel] = useState<AppointmentStatus | null>(
+    null,
+  );
+  const [reason, setReason] = useState("");
 
-  function changeStatus(status: AppointmentStatus) {
+  function changeStatus(status: AppointmentStatus, why?: string) {
     startTransition(async () => {
-      const result = await setAppointmentStatus(appointment.id, status);
+      const result = await setAppointmentStatus(appointment.id, status, why);
       setError(result.ok ? null : result.issues.join(" "));
+      if (result.ok) {
+        setPendingCancel(null);
+        setReason("");
+      }
     });
+  }
+
+  function pick(status: AppointmentStatus) {
+    // Цуцлалтыг түүхэнд үлдээх тул шалтгааныг нь эхлээд асууна
+    if (status === "CANCELLED" || status === "NO_SHOW") {
+      setPendingCancel(status);
+      return;
+    }
+    changeStatus(status);
   }
 
   function remove() {
@@ -768,7 +1308,7 @@ function StatusControls({
               key={status}
               type="button"
               disabled={isPending || active}
-              onClick={() => changeStatus(status)}
+              onClick={() => pick(status)}
               className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition disabled:cursor-default ${
                 active ? "" : "border-sand-300 text-sand-700 hover:bg-sand-50"
               }`}
@@ -787,6 +1327,77 @@ function StatusControls({
           );
         })}
       </div>
+
+      {/* ── Цуцлах шалтгаан ── */}
+      {pendingCancel ? (
+        <div className="mt-3 rounded-xl border border-sand-300 bg-sand-50 p-3">
+          <p className="mb-2 text-sm text-sand-700">
+            {STATUS_LABELS[pendingCancel].label} болгох — шалтгаанаа бичвэл
+            дараа нь хэн, юуны улмаас цуцалсныг харах боломжтой.
+          </p>
+          <input
+            type="text"
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="Жишээ: үйлчлүүлэгч утсаар цуцаллаа"
+            maxLength={120}
+            className={inputClass}
+          />
+          <div className="mt-2 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setPendingCancel(null);
+                setReason("");
+              }}
+              className="rounded-lg border border-sand-300 px-3 py-1.5 text-xs text-sand-700 transition hover:bg-sand-100"
+            >
+              Болих
+            </button>
+            <button
+              type="button"
+              disabled={isPending}
+              onClick={() => changeStatus(pendingCancel, reason)}
+              className="rounded-lg bg-[#9a5555] px-3 py-1.5 text-xs font-medium text-white transition hover:brightness-110 disabled:opacity-50"
+            >
+              {isPending ? "Хадгалж байна…" : "Баталгаажуулах"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ── Цуцлалтын түүх ── */}
+      {appointment.cancelledAt ? (
+        <div className="mt-3 rounded-xl bg-[#f6e8e8] px-3 py-2 text-sm text-[#7d4646]">
+          <p>
+            <strong>{STATUS_LABELS[appointment.status].label}</strong>
+            {appointment.cancelledBy
+              ? ` — ${appointment.cancelledBy.name}`
+              : ""}
+            <span className="text-[#9a7070]">
+              {" · "}
+              {toDateKey(appointment.cancelledAt)}{" "}
+              {formatMinutes(toLocalMinutes(appointment.cancelledAt))}
+            </span>
+          </p>
+          {appointment.cancelReason ? (
+            <p className="mt-0.5 text-[13px]">{appointment.cancelReason}</p>
+          ) : null}
+
+          {replacement ? (
+            <p className="mt-1.5 border-t border-[#e6cfcf] pt-1.5 text-[13px] text-[#5c5850]">
+              Энэ цагийг <strong>{replacement.clientName}</strong> авсан (
+              {formatMinutes(replacement.startMin)}–
+              {formatMinutes(replacement.endMin)}, бүртгэсэн{" "}
+              {toDateKey(replacement.bookedAt)}).
+            </p>
+          ) : (
+            <p className="mt-1.5 border-t border-[#e6cfcf] pt-1.5 text-[13px] text-[#5c5850]">
+              Энэ цаг одоогоор сул байна.
+            </p>
+          )}
+        </div>
+      ) : null}
 
       {error ? (
         <p role="alert" className="mt-2 text-sm text-[#9a5555]">

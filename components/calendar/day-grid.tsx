@@ -16,6 +16,8 @@ import type {
   ServiceCatalog,
 } from "@/lib/queries";
 import { formatMinutes, toDateKey, toLocalMinutes } from "@/lib/time";
+import { formatPrice } from "@/lib/labels";
+import { PAYMENT_STATE_LABELS, summarize } from "@/lib/payments";
 import { AppointmentDialog, type DialogState } from "./appointment-dialog";
 
 /** Нэг минут хэдэн пиксел эзлэх — 1 цаг = 114px */
@@ -37,6 +39,8 @@ type Props = {
   } | null;
   catalog: ServiceCatalog;
   packages: PackageList;
+  /** Энэ салбарт захиалга бүртгэх эрхтэй эсэх (ресепшн зөвхөн харьяа салбартаа) */
+  canWrite: boolean;
 };
 
 /** Захиалгын өнгө — үйлчилгээнийх, эс бөгөөс ангиллынх. */
@@ -48,6 +52,20 @@ function colorOf(appointment: DayAppointment): string {
 /** Өнгийг цайруулж дэвсгэр болгоно. */
 function tint(color: string, percent: number): string {
   return `color-mix(in srgb, ${color} ${percent}%, white)`;
+}
+
+/**
+ * Тухайн өдөр огт ажиллахгүй эсэх — долоо хоногийн хуваарь нь амралттай,
+ * эсвэл ээлжийг бүтэн хамарсан чөлөө авсан.
+ */
+function isRestingAllDay(member: DayStaff): boolean {
+  const shift = member.schedules[0];
+  if (!shift || shift.isDayOff) return true;
+  return member.timeOffs.some(
+    (off) =>
+      (off.startMin ?? 0) <= shift.startMin &&
+      (off.endMin ?? 24 * 60) >= shift.endMin,
+  );
 }
 
 /** "Сарнай" → "СА" */
@@ -68,6 +86,7 @@ export function DayGrid({
   closure,
   catalog,
   packages,
+  canWrite,
 }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -101,12 +120,24 @@ export function DayGrid({
     return marks;
   }, [rangeStart, rangeEnd]);
 
+  /**
+   * Амарч байгаа ажилтныг хуанлиас нуулаа — өдрийн ажиллах баганууд л үлдэнэ.
+   * Захиалгатай бол хэвээр харуулна, эс тэгвэл тэр захиалга харагдахгүй үлдэнэ
+   * (хуваарь нь хожим өөрчлөгдсөн тохиолдол).
+   */
+  const visibleStaff = useMemo(() => {
+    const hasAppointments = new Set(appointments.map((a) => a.staffId));
+    return staff.filter(
+      (member) => hasAppointments.has(member.id) || !isRestingAllDay(member),
+    );
+  }, [staff, appointments]);
+
   const byStaff = useMemo(() => {
     const map = new Map<string, DayAppointment[]>();
-    for (const member of staff) map.set(member.id, []);
+    for (const member of visibleStaff) map.set(member.id, []);
     for (const appt of appointments) map.get(appt.staffId)?.push(appt);
     return map;
-  }, [staff, appointments]);
+  }, [visibleStaff, appointments]);
 
   // Ажлын цаг руу автоматаар гүйлгэнэ
   useEffect(() => {
@@ -126,7 +157,8 @@ export function DayGrid({
   }
 
   const defaultCreate = useMemo<DialogState | null>(() => {
-    const working = staff.find((m) => m.schedules[0] && !m.schedules[0].isDayOff);
+    if (!canWrite) return null;
+    const working = visibleStaff.find((m) => !isRestingAllDay(m));
     if (!working) return null;
     return {
       mode: "create",
@@ -135,25 +167,82 @@ export function DayGrid({
       staffId: working.id,
       startMin: Math.max(openMin, working.schedules[0].startMin),
     };
-  }, [staff, branch.id, dateKey, openMin]);
+  }, [visibleStaff, branch.id, dateKey, openMin, canWrite]);
 
-  // Төлөвт бичихгүйгээр URL-аас гаргаж авна
-  const activeDialog = dialog ?? (wantsNew ? defaultCreate : null);
+  /**
+   * Төлөвт бичихгүйгээр URL-аас гаргаж авна.
+   *
+   * Засварлах горимд захиалгыг сангаас ирсэн ШИНЭ хувилбараар солино: төлбөр
+   * бүртгэсний дараа `refresh()` шинэ өгөгдөл авчирдаг ч `dialog` төлөвт
+   * хуучин хуулбар үлддэг тул цонх шинэчлэгдэхгүй байсан.
+   */
+  const activeDialog = useMemo<DialogState | null>(() => {
+    const base = dialog ?? (wantsNew ? defaultCreate : null);
+    if (base?.mode !== "edit") return base;
+
+    const fresh =
+      appointments.find((a) => a.id === base.appointment.id) ?? base.appointment;
+
+    // Хамтарсан захиалга — ҮРГЭЛЖ үндсэн мөрийг нээнэ (нэхэмжлэх нэг),
+    // бүлгийн бусад мөрийг хамт өгнө.
+    const siblings = fresh.groupId
+      ? appointments.filter((a) => a.groupId === fresh.groupId)
+      : [fresh];
+    const primary = siblings.find((a) => a.isPrimary) ?? fresh;
+
+    /**
+     * Цуцлагдсан захиалгын цагийг дараа нь өөр хүн авсан эсэх.
+     * Ижил ажилтны, давхцаж буй, идэвхтэй захиалгыг хайна — ресепшн «энэ цаг
+     * сул болсон уу» гэдэгт хариулж чадна.
+     */
+    const cancelled =
+      primary.status === "CANCELLED" || primary.status === "NO_SHOW";
+    const replacement = cancelled
+      ? appointments.find(
+          (other) =>
+            other.id !== primary.id &&
+            other.staffId === primary.staffId &&
+            other.status !== "CANCELLED" &&
+            other.status !== "NO_SHOW" &&
+            other.startAt < primary.endAt &&
+            other.endAt > primary.startAt,
+        )
+      : undefined;
+
+    return {
+      ...base,
+      appointment: primary,
+      siblings,
+      replacement: replacement
+        ? {
+            clientName: replacement.client.name,
+            startMin: toLocalMinutes(replacement.startAt),
+            endMin: toLocalMinutes(replacement.endAt),
+            bookedAt: replacement.createdAt,
+          }
+        : null,
+    };
+  }, [dialog, wantsNew, defaultCreate, appointments]);
 
   function closeDialog() {
     setDialog(null);
     clearNewParam();
   }
 
-  if (staff.length === 0) {
+  if (visibleStaff.length === 0) {
+    const noStaffAtAll = staff.length === 0;
     return (
       <div className="grid flex-1 place-items-center p-8 text-center">
         <div>
           <p className="font-medium text-sand-800">
-            Энэ салбарт ажилтан бүртгэгдээгүй байна.
+            {noStaffAtAll
+              ? "Энэ салбарт ажилтан бүртгэгдээгүй байна."
+              : "Энэ өдөр ажиллах ажилтан алга."}
           </p>
           <p className="mt-1 text-sm text-sand-500">
-            Ажилтан хэсгээс ажилтан нэмнэ үү.
+            {noStaffAtAll
+              ? "Ажилтан хэсгээс ажилтан нэмнэ үү."
+              : "Бүх ажилтан амралттай эсвэл чөлөөтэй байна."}
           </p>
         </div>
       </div>
@@ -177,7 +266,7 @@ export function DayGrid({
           {/* ── Ажилтны толгой ── */}
           <div className="sticky top-0 z-20 flex border-b border-sand-200 bg-white">
             <div className={GUTTER} />
-            {staff.map((member) => {
+            {visibleStaff.map((member) => {
               const schedule = member.schedules[0];
               const dayOff = !schedule || schedule.isDayOff;
               const count =
@@ -227,7 +316,7 @@ export function DayGrid({
               ))}
             </div>
 
-            {staff.map((member) => (
+            {visibleStaff.map((member) => (
               <StaffColumn
                 key={member.id}
                 member={member}
@@ -237,6 +326,7 @@ export function DayGrid({
                 gridHeight={gridHeight}
                 slotMin={branch.slotMin}
                 hourMarks={hourMarks}
+                canWrite={canWrite}
                 onCreate={(startMin) => {
                   clearNewParam();
                   setDialog({
@@ -249,11 +339,15 @@ export function DayGrid({
                 }}
                 onOpen={(appointment) => {
                   clearNewParam();
+                  // Бүлгийг activeDialog дотор эцэслэн олно — энд зөвхөн
+                  // дарсан мөрийг тэмдэглэхэд хангалттай.
                   setDialog({
                     mode: "edit",
                     branchId: branch.id,
                     dateKey,
                     appointment,
+                    siblings: [appointment],
+                    replacement: null,
                   });
                 }}
               />
@@ -276,9 +370,10 @@ export function DayGrid({
               : `${activeDialog.staffId}-${activeDialog.startMin}`
           }
           state={activeDialog}
-          staff={staff}
+          staff={visibleStaff}
           catalog={catalog}
           packages={packages}
+          canWrite={canWrite}
           onClose={closeDialog}
         />
       ) : null}
@@ -294,6 +389,7 @@ function StaffColumn({
   gridHeight,
   slotMin,
   hourMarks,
+  canWrite,
   onCreate,
   onOpen,
 }: {
@@ -304,15 +400,18 @@ function StaffColumn({
   gridHeight: number;
   slotMin: number;
   hourMarks: number[];
+  canWrite: boolean;
   onCreate: (startMin: number) => void;
   onOpen: (appointment: DayAppointment) => void;
 }) {
   const schedule = member.schedules[0];
   const dayOff = !schedule || schedule.isDayOff;
+  // Амралттай ч захиалгатай тул харагдаж буй багана — шинэ цаг оруулахыг хаана
+  const locked = dayOff || !canWrite;
   const laidOut = useMemo(() => layoutAppointments(appointments), [appointments]);
 
   function handleClick(event: React.MouseEvent<HTMLDivElement>) {
-    if (dayOff) return;
+    if (locked) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const raw = rangeStart + (event.clientY - rect.top) / PX_PER_MIN;
     const snapped = Math.floor(raw / slotMin) * slotMin;
@@ -356,10 +455,10 @@ function StaffColumn({
 
       <div
         role="button"
-        tabIndex={dayOff ? -1 : 0}
+        tabIndex={locked ? -1 : 0}
         aria-label={`${member.name} — шинэ цаг захиалах`}
         onClick={handleClick}
-        className={`absolute inset-0 ${dayOff ? "cursor-not-allowed" : "cursor-copy"}`}
+        className={`absolute inset-0 ${locked ? "cursor-not-allowed" : "cursor-copy"}`}
       />
 
       {laidOut.map(({ appointment, column, columns }) => (
@@ -421,11 +520,32 @@ function AppointmentBlock({
   const width = 100 / columns;
   const compact = duration < 40;
 
+  // Хамтарсан захиалга — нэг үйлчлүүлэгч хоёр ажилтанд зэрэг үйлчлүүлж байна
+  const grouped = Boolean(appointment.groupId);
+
+  // Төлбөрийн байдал — блок дээр нэг харцаар харагдана.
+  // Бүлгийн хувьд төлбөр үндсэн мөрөнд наалддаг тул зөвхөн тэнд харуулна.
+  const money = summarize({
+    totalPrice: appointment.totalPrice,
+    payments: appointment.payments,
+  });
+  const moneyMark =
+    grouped && !appointment.isPrimary
+      ? null
+      : money.state === "PAID" || money.state === "OVERPAID"
+        ? { text: "₮", title: "Төлбөр бүрэн төлөгдсөн" }
+        : money.state === "PARTIAL"
+          ? {
+              text: "½",
+              title: `Дутуу төлсөн — үлдэгдэл ${formatPrice(money.balance)}`,
+            }
+          : null;
+
   return (
     <button
       type="button"
       onClick={() => onOpen(appointment)}
-      title={`${appointment.client.name} · ${formatMinutes(startMin)}–${formatMinutes(endMin)} · ${appointment.items.map((i) => i.name).join(", ")}`}
+      title={`${appointment.client.name} · ${formatMinutes(startMin)}–${formatMinutes(endMin)} · ${appointment.items.map((i) => i.name).join(", ")}${grouped ? " · хамтарсан захиалга" : ""}${moneyMark ? ` · ${moneyMark.title}` : ""}`}
       className={`absolute overflow-hidden rounded-lg pl-3.5 pr-2.5 text-left transition hover:z-10 hover:shadow-md focus:z-10 focus:outline-none focus:ring-2 focus:ring-brand-500/40 ${
         compact ? "py-1" : "py-2"
       } ${noShow ? "hatched" : ""}`}
@@ -445,6 +565,28 @@ function AppointmentBlock({
         style={{ backgroundColor: color, opacity: cancelled ? 0.5 : 1 }}
       />
 
+      {/* Хамтарсан захиалгын тасархай хүрээ — багануудыг нүдээр холбоно */}
+      {grouped ? (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-0 rounded-lg border border-dashed"
+          style={{ borderColor: color }}
+        />
+      ) : null}
+
+      {moneyMark ? (
+        <span
+          title={moneyMark.title}
+          className="absolute right-1.5 top-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-bold leading-none"
+          style={{
+            backgroundColor: PAYMENT_STATE_LABELS[money.state].bg,
+            color: PAYMENT_STATE_LABELS[money.state].color,
+          }}
+        >
+          {moneyMark.text}
+        </span>
+      ) : null}
+
       <p className="truncate font-mono text-[11px]" style={{ color }}>
         {formatMinutes(startMin)} – {formatMinutes(endMin)}
       </p>
@@ -453,6 +595,15 @@ function AppointmentBlock({
           cancelled ? "line-through" : ""
         }`}
       >
+        {grouped ? (
+          <span
+            aria-hidden
+            title="Хамтарсан захиалга — өөр ажилтан зэрэг үйлчилж байна"
+            className="mr-1 text-sand-500"
+          >
+            ⇄
+          </span>
+        ) : null}
         {appointment.client.name}
       </p>
       {!compact ? (

@@ -3,6 +3,7 @@ import { getBranches } from "@/lib/queries";
 import { getReport, type Report } from "@/lib/reports";
 import { formatDateLong, formatDuration, formatPrice } from "@/lib/labels";
 import { isDateKey, todayKey } from "@/lib/time";
+import { PAYMENT_METHOD_LABELS } from "@/lib/payments";
 import { PageHeader } from "@/components/page-header";
 import { ReportFilters } from "@/components/reports/report-filters";
 
@@ -46,6 +47,23 @@ export default async function ReportsPage(props: PageProps<"/reports">) {
 
       <div className="min-h-0 flex-1 space-y-6 overflow-auto scrollbar-slim p-4 md:p-6">
         <Summary summary={report.summary} />
+
+        <Section
+          title="Төлбөрийн хэлбэрээр"
+          hint="Тухайн хугацаанд бүртгэсэн бүх төлбөр — урьдчилгаа, үлдэгдэл, буцаалт."
+          empty={report.payments.length === 0}
+        >
+          <Table head={["Хэлбэр", "Дүн"]} align="r">
+            {report.payments.map((row) => (
+              <tr key={row.method} className="hover:bg-sand-50">
+                <td className="px-4 py-2.5 font-medium text-sand-900">
+                  {PAYMENT_METHOD_LABELS[row.method]}
+                </td>
+                <Num>{formatPrice(row.amount)}</Num>
+              </tr>
+            ))}
+          </Table>
+        </Section>
 
         <Section
           title="Ажилтнаар"
@@ -152,9 +170,25 @@ function Summary({ summary }: { summary: Report["summary"] }) {
       hint: `${summary.pendingCount} захиалга`,
     },
     {
+      label: "Гарт орсон",
+      value: formatPrice(summary.collected),
+      hint: "Бодитоор төлөгдсөн",
+      strong: true,
+    },
+    {
+      label: "Авах үлдэгдэл",
+      value: formatPrice(summary.outstanding),
+      hint: "Төлөгдөөгүй дүн",
+    },
+    {
       label: "Нийт дүн",
       value: formatPrice(summary.realized.subtotal + summary.pending.subtotal),
       hint: "Хөнгөлөлтийн өмнөх",
+    },
+    {
+      label: "Нэмэлт төлбөр",
+      value: formatPrice(summary.realized.extra + summary.pending.extra),
+      hint: "Материал, урт хумс г.м.",
     },
     {
       label: "Хөнгөлөлт",
@@ -177,7 +211,7 @@ function Summary({ summary }: { summary: Report["summary"] }) {
   ];
 
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
       {cards.map((card) => (
         <div
           key={card.label}

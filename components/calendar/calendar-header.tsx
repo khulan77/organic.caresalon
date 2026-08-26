@@ -16,6 +16,8 @@ type Props = {
   realRole: Role;
   /** Одоо харуулж буй эрх (админ «Ресепшн» горимд орж болно) */
   effectiveRole: Role;
+  /** Идэвхтэй салбарт захиалга бүртгэх эрхтэй эсэх */
+  canWrite: boolean;
 };
 
 export function CalendarHeader({
@@ -24,6 +26,7 @@ export function CalendarHeader({
   dateKey,
   realRole,
   effectiveRole,
+  canWrite,
 }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -114,7 +117,13 @@ export function CalendarHeader({
         <button
           type="button"
           onClick={() => navigate({}, { new: true })}
-          className="shrink-0 rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-brand-700 md:px-5 md:py-2.5"
+          disabled={!canWrite}
+          title={
+            canWrite
+              ? undefined
+              : "Энэ салбарт захиалга бүртгэх эрхгүй — зөвхөн харна"
+          }
+          className="shrink-0 rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-sand-300 disabled:text-sand-500 disabled:shadow-none md:px-5 md:py-2.5"
         >
           <span aria-hidden className="mr-1.5">
             +
@@ -152,6 +161,13 @@ export function CalendarHeader({
             );
           })}
         </div>
+
+        {!canWrite ? (
+          <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-amber-50 px-3 py-1.5 text-xs text-amber-900 ring-1 ring-amber-200">
+            <span aria-hidden>👁</span>
+            Зөвхөн харах — өөр салбарын хуанли
+          </span>
+        ) : null}
       </div>
     </header>
   );

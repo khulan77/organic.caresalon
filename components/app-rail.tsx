@@ -214,7 +214,12 @@ export function AppRail({
             onClick={() => setMenuOpen(false)}
             className="no-print fixed inset-0 z-40 cursor-default"
           />
-          <div className="no-print fixed bottom-4 left-[236px] z-50 w-56 rounded-xl border border-sand-200 bg-white p-1.5 shadow-xl">
+          {/*
+            Гар утсанд rail нь 228px өргөнтэй drawer — цэсийг 236px-т байрлуулбал
+            дэлгэцээс хальдаг. Тиймээс жижиг дэлгэцэд доод талд бүтэн өргөнөөр,
+            md-ээс дээш rail-ийн хажууд гаргана.
+          */}
+          <div className="no-print fixed bottom-4 left-4 right-4 z-50 rounded-xl border border-sand-200 bg-white p-1.5 shadow-xl md:left-[236px] md:right-auto md:w-56">
             <div className="border-b border-sand-100 px-2.5 py-2">
               <p className="truncate text-sm font-medium text-sand-900">
                 {user.name}

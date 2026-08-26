@@ -2,7 +2,10 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import { dayRangeUtc, toDateKey, type DateKey } from "@/lib/time";
-import type { AppointmentStatus } from "@/lib/generated/prisma/enums";
+import type {
+  AppointmentStatus,
+  PaymentMethod,
+} from "@/lib/generated/prisma/enums";
 
 /**
  * Админы тайлан — сонгосон хугацааны үнэ, орлого, ажилтны ачааллын нэгтгэл.
@@ -27,20 +30,33 @@ export type ReportRange = {
 
 /** Мөнгөн дүнгүүдийн нэгдсэн хэлбэр — хүснэгт бүрт давтагдана. */
 type Money = {
-  /** Хөнгөлөлтийн өмнөх нийлбэр */
+  /** Үйлчилгээний нийлбэр — хөнгөлөлтийн ӨМНӨХ */
   subtotal: number;
+  /** Нэмэлт төлбөр (материал, урт хумс г.м.) */
+  extra: number;
   discount: number;
-  /** Төлөх дүн = subtotal − discount */
+  /** Төлөх дүн = subtotal + extra − discount */
   total: number;
 };
 
-const zeroMoney = (): Money => ({ subtotal: 0, discount: 0, total: 0 });
+const zeroMoney = (): Money => ({
+  subtotal: 0,
+  extra: 0,
+  discount: 0,
+  total: 0,
+});
 
 function addMoney(
   target: Money,
-  appt: { subtotal: number; discount: number; totalPrice: number },
+  appt: {
+    subtotal: number;
+    extraTotal: number;
+    discount: number;
+    totalPrice: number;
+  },
 ): void {
   target.subtotal += appt.subtotal;
+  target.extra += appt.extraTotal;
   target.discount += appt.discount;
   target.total += appt.totalPrice;
 }
@@ -60,12 +76,15 @@ export async function getReport(range: ReportRange) {
       startAt: true,
       endAt: true,
       status: true,
+      groupId: true,
       subtotal: true,
+      extraTotal: true,
       discount: true,
       totalPrice: true,
       staff: { select: { id: true, name: true, color: true } },
       branch: { select: { id: true, name: true } },
       items: { select: { name: true, price: true, durationMin: true } },
+      payments: { select: { amount: true, method: true } },
     },
   });
 
@@ -77,6 +96,19 @@ export async function getReport(range: ReportRange) {
   let noShowCount = 0;
   /** Цуцлагдсан захиалгын алдагдсан боломжит дүн */
   let lostTotal = 0;
+
+  /**
+   * Бодитоор ГАРТ ОРСОН мөнгө — `Payment` мөрүүдийн нийлбэр.
+   * Захиалгын дүнгээс тусдаа: дутуу төлсөн, урьдчилгаа авсан нь эндээс харагдана.
+   */
+  let collected = 0;
+  const byMethod = new Map<PaymentMethod, number>();
+
+  /**
+   * Хамтарсан захиалга нэг ИРЭЛТ — хоёр мөр байсан ч нэг л удаа тоологдоно.
+   * Мөнгө нь мөрүүдэд хуваарилагдсан тул дүнг давхардуулахгүй нэмнэ.
+   */
+  const visits = new Set<string>();
 
   // Ажилтан, үйлчилгээ, салбар, өдрөөр нэгтгэх сав
   const byStaff = new Map<
@@ -102,24 +134,41 @@ export async function getReport(range: ReportRange) {
   for (const appt of appointments) {
     const isRealized = REALIZED.includes(appt.status);
     const isPending = PENDING.includes(appt.status);
+    const visitKey = appt.groupId ?? appt.id;
+
+    // Төлбөр цуцлагдсан захиалгад ч бүртгэгдсэн байж болно (буцаагаагүй
+    // урьдчилгаа) — тиймээс төлөвөөс үл хамааран тоолно.
+    for (const payment of appt.payments) {
+      collected += payment.amount;
+      byMethod.set(
+        payment.method,
+        (byMethod.get(payment.method) ?? 0) + payment.amount,
+      );
+    }
 
     if (appt.status === "CANCELLED") {
-      cancelledCount += 1;
+      if (!visits.has(visitKey)) cancelledCount += 1;
+      visits.add(visitKey);
       lostTotal += appt.totalPrice;
       continue; // Цуцлагдсан захиалга ачаалал ба орлогод орохгүй
     }
     if (appt.status === "NO_SHOW") {
-      noShowCount += 1;
+      if (!visits.has(visitKey)) noShowCount += 1;
+      visits.add(visitKey);
       lostTotal += appt.totalPrice;
       continue;
     }
 
+    // Дүнг мөр бүрээр нэмнэ (хуваарилагдсан), тоог зөвхөн ШИНЭ ирэлт дээр
+    const newVisit = !visits.has(visitKey);
+    visits.add(visitKey);
+
     if (isRealized) {
       addMoney(realized, appt);
-      realizedCount += 1;
+      if (newVisit) realizedCount += 1;
     } else if (isPending) {
       addMoney(pending, appt);
-      pendingCount += 1;
+      if (newVisit) pendingCount += 1;
     }
 
     const dateKey = toDateKey(appt.startAt);
@@ -157,7 +206,7 @@ export async function getReport(range: ReportRange) {
       };
       byBranch.set(appt.branch.id, branchRow);
     }
-    branchRow.appointments += 1;
+    if (newVisit) branchRow.appointments += 1;
     addMoney(branchRow.money, appt);
 
     // ── Үйлчилгээ ── нэрээр нэгтгэнэ: үйлчилгээ устсан ч түүх үлдэнэ
@@ -174,7 +223,7 @@ export async function getReport(range: ReportRange) {
 
     // ── Өдөр ──
     const dayRow = byDay.get(dateKey) ?? { appointments: 0, total: 0 };
-    dayRow.appointments += 1;
+    if (newVisit) dayRow.appointments += 1;
     dayRow.total += appt.totalPrice;
     byDay.set(dateKey, dayRow);
   }
@@ -195,7 +244,14 @@ export async function getReport(range: ReportRange) {
       /** Дууссан захиалгын дундаж дүн */
       averageTicket:
         realizedCount > 0 ? Math.round(realized.total / realizedCount) : 0,
+      /** Бодитоор гарт орсон мөнгө */
+      collected,
+      /** Хүлээгдэж буй ба дууссан захиалгын нийт дүнгээс төлөгдөөгүй үлдэгдэл */
+      outstanding: realized.total + pending.total - collected,
     },
+    payments: [...byMethod.entries()]
+      .map(([method, amount]) => ({ method, amount }))
+      .sort((a, b) => b.amount - a.amount),
     staff: staffRows,
     services: [...byService.values()].sort((a, b) => b.amount - a.amount),
     branches: [...byBranch.values()].sort((a, b) => b.money.total - a.money.total),

@@ -50,6 +50,10 @@ export default async function CalendarPage(props: PageProps<"/calendar">) {
   const view =
     params.view === "15" || params.view === "30" ? Number(params.view) : 0;
 
+  // Ресепшн бусад салбарын хуанлийг ХАРНА, гэхдээ зөвхөн харьяа салбартаа
+  // бүртгэнэ. Энэ нь зөвхөн UI — жинхэнэ хориг server action дотор (lib/auth).
+  const canWrite = effectiveRole === "ADMIN" || user.branchId === branch.id;
+
   const header = (
     <CalendarHeader
       branches={branches}
@@ -57,6 +61,7 @@ export default async function CalendarPage(props: PageProps<"/calendar">) {
       dateKey={dateKey}
       realRole={user.role}
       effectiveRole={effectiveRole}
+      canWrite={canWrite}
     />
   );
 
@@ -79,6 +84,7 @@ export default async function CalendarPage(props: PageProps<"/calendar">) {
           closure={schedule.closure}
           catalog={catalog}
           packages={packages}
+          canWrite={canWrite}
         />
       </main>
     );

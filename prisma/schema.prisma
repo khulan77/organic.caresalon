@@ -16,18 +16,26 @@ datasource db {
 
 /// Системд нэвтрэх хэрэглэгчийн эрх
 enum Role {
-  ADMIN     // Админ — бүх эрхтэй
+  ADMIN // Админ — бүх эрхтэй
   RECEPTION // Ресепшн — бүх салбарын захиалга харна, тохиргоо өөрчлөхгүй
+}
+
+/// Төлбөрийн хэлбэр
+enum PaymentMethod {
+  CASH // Бэлэн
+  CARD // Карт
+  TRANSFER // Данс / QR
+  OTHER // Бусад
 }
 
 /// Цаг захиалгын төлөв
 enum AppointmentStatus {
-  BOOKED    // Захиалсан
+  BOOKED // Захиалсан
   CONFIRMED // Баталгаажсан
-  ARRIVED   // Ирсэн
+  ARRIVED // Ирсэн
   COMPLETED // Дууссан
   CANCELLED // Цуцалсан
-  NO_SHOW   // Ирээгүй
+  NO_SHOW // Ирээгүй
 }
 
 // ─────────────────────────────── Салбар ────────────────────────────────
@@ -36,7 +44,7 @@ enum AppointmentStatus {
 model Branch {
   id        String   @id @default(cuid())
   name      String   @unique // "Olympic Residence"
-  address   String            // "Олимпийн ордон, 2 давхар"
+  address   String // "Олимпийн ордон, 2 давхар"
   phone     String?
   /// Ажлын эхлэх цаг — локал минут (600 = 10:00)
   openMin   Int      @default(600)
@@ -67,7 +75,7 @@ model BranchClosure {
   isClosed Boolean  @default(true)
   openMin  Int?
   closeMin Int?
-  reason   String?  // "Шинэ жил", "Цагаан сар"
+  reason   String? // "Шинэ жил", "Цагаан сар"
 
   branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
 
@@ -79,24 +87,27 @@ model BranchClosure {
 
 /// Системд нэвтрэх хэрэглэгч (админ, ресепшн)
 model User {
-  id           String   @id @default(cuid())
-  name         String
+  id                 String    @id @default(cuid())
+  name               String
   /// Нэвтрэх нэр — утасны дугаараар нэвтэрнэ
-  phone        String   @unique
-  passwordHash String
-  role         Role     @default(RECEPTION)
+  phone              String    @unique
+  passwordHash       String
+  role               Role      @default(RECEPTION)
   /// Үндсэн салбар. Ресепшн бүх салбарыг харна, энэ нь зөвхөн анхны сонголт.
-  branchId     String?
-  isActive     Boolean  @default(true)
+  branchId           String?
+  isActive           Boolean   @default(true)
   /// Түр нууц үгтэй эсэх. true бол анх нэвтрэхэд заавал өөрийн нууц үгээр солино.
-  mustChangePassword Boolean @default(false)
-  lastLoginAt  DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  mustChangePassword Boolean   @default(false)
+  lastLoginAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
-  branch       Branch?       @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  sessions     Session[]
-  createdAppts Appointment[] @relation("AppointmentCreatedBy")
+  branch         Branch?             @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  sessions       Session[]
+  createdAppts   Appointment[]       @relation("AppointmentCreatedBy")
+  cancelledAppts Appointment[]       @relation("AppointmentCancelledBy")
+  createdCharges AppointmentCharge[] @relation("ChargeCreatedBy")
+  receivedPays   Payment[]           @relation("PaymentReceivedBy")
 
   @@map("users")
 }
@@ -135,7 +146,7 @@ model Staff {
   id        String   @id @default(cuid())
   name      String
   phone     String?
-  position  String?  // "Маникюрист", "Мастер"
+  position  String? // "Маникюрист", "Мастер"
   branchId  String
   /// Хуанли дээрх өнгө (hex)
   color     String   @default("#94a3b8")
@@ -178,7 +189,7 @@ model StaffTimeOff {
   /// null бол бүтэн өдөр чөлөөтэй
   startMin Int?
   endMin   Int?
-  reason   String?  // "Чөлөө", "Өвчтэй", "Амралт"
+  reason   String? // "Чөлөө", "Өвчтэй", "Амралт"
 
   staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
 
@@ -201,7 +212,7 @@ model ServiceCategory {
 
 /// Үйлчилгээ + үнэ
 model Service {
-  id          String  @id @default(cuid())
+  id          String    @id @default(cuid())
   categoryId  String
   name        String
   /// Үргэлжлэх хугацаа, минутаар
@@ -214,8 +225,8 @@ model Service {
   saleEndsAt  DateTime?
   /// Хуанли дээрх өнгө (hex). Хоосон бол ангиллын өнгийг авна.
   color       String?
-  isActive    Boolean @default(true)
-  sortOrder   Int     @default(0)
+  isActive    Boolean   @default(true)
+  sortOrder   Int       @default(0)
 
   category ServiceCategory      @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   items    AppointmentService[]
@@ -283,39 +294,61 @@ model Client {
 
 /// Цаг захиалга. startAt / endAt нь UTC.
 model Appointment {
-  id          String            @id @default(cuid())
-  branchId    String
-  staffId     String
-  clientId    String
+  id            String            @id @default(cuid())
+  branchId      String
+  staffId       String
+  clientId      String
   /// Эхлэх цаг (UTC)
-  startAt     DateTime
+  startAt       DateTime
   /// Дуусах цаг (UTC) — үйлчилгээнүүдийн нийт хугацаагаар тооцно
-  endAt       DateTime
-  status      AppointmentStatus @default(BOOKED)
-  note        String?
+  endAt         DateTime
+  status        AppointmentStatus @default(BOOKED)
+  note          String?
+  /// Хамтарсан захиалгын бүлэг — нэг үйлчлүүлэгч ОЛОН ажилтанд ЗЭРЭГ үйлчлүүлэх.
+  /// Бүлгийн бүх мөр ижил groupId, ЯГ ижил startAt/endAt-тай (зэрэг эхэлж
+  /// зэрэг дуусна). null бол ганц ажилтны энгийн захиалга.
+  groupId       String?
+  /// Бүлгийн ҮНДСЭН мөр эсэх.
+  /// Нэмэлт төлбөр ба төлбөрийн бичилт ЗӨВХӨН үндсэн мөрөнд наалдана —
+  /// нэг үйлчлүүлэгч НЭГ нэхэмжлэх авна. Хөнгөлөлтийг мөр бүрийн үйлчилгээний
+  /// дүнгээр хувь тэнцүүлэн хуваарилдаг тул ажилтны орлого зөв гарна.
+  isPrimary     Boolean           @default(true)
   /// Хэрэглэсэн багц (сонгосон бол)
-  packageId   String?
+  packageId     String?
   /// Үйлчилгээнүүдийн нийлбэр — хөнгөлөлтийн ӨМНӨХ дүн
-  subtotal    Int               @default(0)
+  subtotal      Int               @default(0)
+  /// Нэмэлт төлбөрүүдийн нийлбэр (charges). Тооцоог хурдан гаргахад хадгална.
+  extraTotal    Int               @default(0)
   /// Хөнгөлөлтийн дүн, төгрөгөөр (багцын хямдрал + гараар өгсөн хөнгөлөлт)
-  discount    Int               @default(0)
+  discount      Int               @default(0)
   /// Хөнгөлөлтийн шалтгаан
-  discountNote String?
-  /// Эцсийн төлөх дүн = subtotal − discount
-  totalPrice  Int               @default(0)
-  createdById String?
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
+  discountNote  String?
+  /// Эцсийн төлөх дүн = subtotal + extraTotal − discount
+  totalPrice    Int               @default(0)
+  createdById   String?
+  /// Цуцалсан / ирээгүй болгосон агшин (UTC). Идэвхтэй төлөвт буцаавал арилна.
+  cancelledAt   DateTime?
+  /// Хэн цуцалсан
+  cancelledById String?
+  /// Яагаад цуцалсан
+  cancelReason  String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
 
-  branch    Branch               @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  staff     Staff                @relation(fields: [staffId], references: [id], onDelete: Restrict)
-  client    Client               @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  pkg       Package?             @relation(fields: [packageId], references: [id], onDelete: SetNull)
-  createdBy User?                @relation("AppointmentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  items     AppointmentService[]
+  branch      Branch               @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  staff       Staff                @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  client      Client               @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  pkg         Package?             @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  createdBy   User?                @relation("AppointmentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  cancelledBy User?                @relation("AppointmentCancelledBy", fields: [cancelledById], references: [id], onDelete: SetNull)
+  items       AppointmentService[]
+  charges     AppointmentCharge[]
+  payments    Payment[]
 
   // Хуанли татах гол индекс: салбар + өдрийн муж
   @@index([branchId, startAt])
+  // Бүлгийн гишүүдийг цуглуулах
+  @@index([groupId])
   // Давхцал шалгах индекс: ажилтан + цагийн муж
   @@index([staffId, startAt, endAt])
   @@index([clientId])
@@ -339,4 +372,51 @@ model AppointmentService {
 
   @@index([appointmentId])
   @@map("appointment_services")
+}
+
+/// Захиалганд гараар нэмсэн НЭМЭЛТ ТӨЛБӨР — үйлчилгээний жагсаалтад байхгүй зардал.
+/// Жишээ: урт хумс, нэмэлт чимэглэл, материалын нэмэгдэл.
+/// Хугацаанд нөлөөлөхгүй — зөвхөн төлөх дүнг нэмнэ.
+model AppointmentCharge {
+  id            String   @id @default(cuid())
+  appointmentId String
+  /// Юуны төлбөр болох тайлбар
+  label         String
+  /// Дүн, төгрөгөөр. Эерэг байна.
+  amount        Int
+  createdById   String?
+  createdAt     DateTime @default(now())
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  createdBy   User?       @relation("ChargeCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([appointmentId])
+  @@map("appointment_charges")
+}
+
+/// Захиалгын төлбөрийн бичилт. Урьдчилгаа, үлдэгдэл, буцаалт БҮГД энд мөр болно.
+///
+/// Нэг захиалга олон мөртэй байж болно:
+///   урьдчилгаа 20,000₮ (isDeposit) → үлдэгдэл 30,000₮
+/// Төлсөн нийт дүн = мөрүүдийн нийлбэр. Буцаалтыг СӨРӨГ дүнгээр бичнэ.
+model Payment {
+  id            String        @id @default(cuid())
+  appointmentId String
+  /// Төлсөн дүн, төгрөгөөр. Буцаалт бол сөрөг.
+  amount        Int
+  method        PaymentMethod @default(CASH)
+  /// Урьдчилгаа эсэх — үйлчилгээ дуусахаас өмнө урьдчилж авсан төлбөр
+  isDeposit     Boolean       @default(false)
+  note          String?
+  /// Төлбөрийг хүлээж авсан хэрэглэгч
+  receivedById  String?
+  createdAt     DateTime      @default(now())
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  receivedBy  User?       @relation("PaymentReceivedBy", fields: [receivedById], references: [id], onDelete: SetNull)
+
+  @@index([appointmentId])
+  // Тайланд хугацаагаар шүүхэд
+  @@index([createdAt])
+  @@map("payments")
 }

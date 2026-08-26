@@ -73,12 +73,37 @@ export async function getDaySchedule(branchId: string, dateKey: DateKey) {
         endAt: true,
         status: true,
         note: true,
+        groupId: true,
+        isPrimary: true,
+        createdAt: true,
+        cancelledAt: true,
+        cancelReason: true,
+        cancelledBy: { select: { name: true } },
         subtotal: true,
+        extraTotal: true,
         discount: true,
         discountNote: true,
         totalPrice: true,
         packageId: true,
         client: { select: { id: true, name: true, phone: true, note: true } },
+        // Нэмэлт төлбөр — захиалгын цонхонд засагдана
+        charges: {
+          orderBy: { createdAt: "asc" },
+          select: { id: true, label: true, amount: true },
+        },
+        // Төлбөрийн бичилтүүд — урьдчилгаа, үлдэгдэл
+        payments: {
+          orderBy: { createdAt: "asc" },
+          select: {
+            id: true,
+            amount: true,
+            method: true,
+            isDeposit: true,
+            note: true,
+            createdAt: true,
+            receivedBy: { select: { name: true } },
+          },
+        },
         items: {
           orderBy: { sortOrder: "asc" },
           select: {

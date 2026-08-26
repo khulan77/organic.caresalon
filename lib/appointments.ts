@@ -29,6 +29,8 @@ export type SlotInput = {
   durationMin: number;
   /** Засварлаж байгаа захиалгыг өөрөөс нь давхцуулж үзэхгүйн тулд */
   excludeAppointmentId?: string;
+  /** Бүлгээр засварлах үед — бүлгийн бүх мөрийг давхцалд тооцохгүй */
+  excludeAppointmentIds?: string[];
 };
 
 export type SlotIssue = { code: string; message: string };
@@ -179,9 +181,13 @@ export async function validateSlot(input: SlotInput): Promise<SlotIssue[]> {
       status: { in: ACTIVE_STATUSES },
       startAt: { lt: endAt },
       endAt: { gt: startAt },
-      ...(input.excludeAppointmentId
-        ? { id: { not: input.excludeAppointmentId } }
-        : {}),
+      ...(() => {
+        const excluded = [
+          ...(input.excludeAppointmentId ? [input.excludeAppointmentId] : []),
+          ...(input.excludeAppointmentIds ?? []),
+        ];
+        return excluded.length > 0 ? { id: { notIn: excluded } } : {};
+      })(),
     },
     select: {
       id: true,
@@ -214,6 +220,15 @@ export async function resolveBooking(input: {
   packageId?: string | null;
   /** Гараар өгсөн нэмэлт хөнгөлөлт, төгрөгөөр */
   manualDiscount?: number;
+  /** Гараар нэмсэн нэмэлт төлбөрүүд (урт хумс, материал г.м.) */
+  charges?: { label: string; amount: number }[];
+  /**
+   * Үйлчилгээ бүрийг ХЭН хийх — `serviceIds`-тай ИЖИЛ дараалалтай.
+   * Хоосон эсвэл дутуу бол `primaryStaffId` руу унана.
+   */
+  serviceStaffIds?: string[];
+  /** Үндсэн ажилтан — хуваарилагдаагүй үйлчилгээ бүгд түүнд очно. */
+  primaryStaffId: string;
 }) {
   const pkg = input.packageId
     ? await prisma.package.findUnique({
@@ -276,7 +291,15 @@ export async function resolveBooking(input: {
   });
 
   const subtotal = services.reduce((sum, s) => sum + s.price, 0);
-  const totalDuration = services.reduce((sum, s) => sum + s.durationMin, 0);
+
+  // Нэмэлт төлбөр — хоосон нэр, тэг/сөрөг дүнг шүүнэ. Хугацаанд нөлөөлөхгүй.
+  const charges = (input.charges ?? [])
+    .map((charge) => ({
+      label: charge.label.trim().slice(0, 80),
+      amount: Math.round(charge.amount),
+    }))
+    .filter((charge) => charge.label.length > 0 && charge.amount > 0);
+  const extraTotal = charges.reduce((sum, charge) => sum + charge.amount, 0);
 
   // Багцын хөнгөлөлт — зөвхөн багцад орсон үйлчилгээнүүдээс тооцно
   const packageSubtotal = services
@@ -285,20 +308,105 @@ export async function resolveBooking(input: {
   const packageDiscount = pkg ? Math.max(0, packageSubtotal - pkg.price) : 0;
 
   const manual = Math.max(0, Math.round(input.manualDiscount ?? 0));
+  // Хөнгөлөлт нь ҮЙЛЧИЛГЭЭНИЙ дүнгээс хэтрэхгүй — нэмэлт төлбөр (материалын
+  // зардал) хөнгөлөлтөөр арчигдаж болохгүй.
   const discount = Math.min(subtotal, packageDiscount + manual);
 
   const notes: string[] = [];
   if (packageDiscount > 0 && pkg) notes.push(`Багц: ${pkg.name}`);
 
+  // ── Үйлчилгээг ажилтнаар нь хуваах ──
+  // Оруулсан дараалал: багцынх эхэлж, дараа нь нэмэлт. Хуваарилалт нь
+  // ХЭРЭГЛЭГЧИЙН оруулсан `serviceIds` дарааллаар ирдэг тул индексээр таарна.
+  const staffOf = new Map<string, string>();
+  input.serviceIds.forEach((serviceId, index) => {
+    const staffId = input.serviceStaffIds?.[index];
+    if (staffId) staffOf.set(serviceId, staffId);
+  });
+
+  type Group = {
+    staffId: string;
+    services: typeof services;
+    subtotal: number;
+    durationMin: number;
+  };
+
+  // Map нь оруулсан дарааллаа хадгална — үндсэн ажилтан эхэнд байхыг
+  // доор тусад нь баталгаажуулна.
+  const groupMap = new Map<string, Group>();
+  for (const service of services) {
+    const staffId = staffOf.get(service.id) ?? input.primaryStaffId;
+    const group = groupMap.get(staffId) ?? {
+      staffId,
+      services: [],
+      subtotal: 0,
+      durationMin: 0,
+    };
+    group.services.push(service);
+    group.subtotal += service.price;
+    group.durationMin += service.durationMin;
+    groupMap.set(staffId, group);
+  }
+
+  // Үндсэн ажилтан ҮРГЭЛЖ эхний мөр — төлбөр, нэмэлт төлбөр түүнд наалдана.
+  // Үндсэн ажилтанд нэг ч үйлчилгээ ногдоогүй бол эхний бүлэг үндсэн болно.
+  const all = [...groupMap.values()];
+  const ordered = [
+    ...all.filter((group) => group.staffId === input.primaryStaffId),
+    ...all.filter((group) => group.staffId !== input.primaryStaffId),
+  ];
+
+  /**
+   * Бүлгийн нийт хугацаа = ХАМГИЙН УРТ ажилтных.
+   * Зэрэг эхэлж зэрэг дуусах тул бүх багана ижил өндөртэй харагдана —
+   * богино үйлчилгээтэй ажилтны цаг ч бүлгийн төгсгөл хүртэл эзлэгдэнэ.
+   */
+  const totalDuration = ordered.reduce(
+    (max, group) => Math.max(max, group.durationMin),
+    0,
+  );
+
+  /**
+   * Хөнгөлөлтийг мөр бүрийн үйлчилгээний дүнгээр ХУВЬ ТЭНЦҮҮЛЭН хуваарилна.
+   * Ингэснээр `totalPrice`-ийн нийлбэр бүлгийн бодит дүнтэй таарч, ажилтан
+   * тус бүрийн орлого ч зөв гарна. Мөнгө алдагдахгүйн тулд бүхэлчилсний
+   * үлдэгдлийг эхний (үндсэн) мөрөнд өгнө.
+   */
+  let allocated = 0;
+  const groups = ordered.map((group, index) => {
+    const isLast = index === ordered.length - 1;
+    const share =
+      subtotal === 0
+        ? 0
+        : isLast
+          ? discount - allocated
+          : Math.floor((discount * group.subtotal) / subtotal);
+    allocated += share;
+
+    // Нэмэлт төлбөр бүхэлдээ үндсэн мөрөнд — материалын зардал хуваагдахгүй
+    const extra = index === 0 ? extraTotal : 0;
+
+    return {
+      ...group,
+      isPrimary: index === 0,
+      discount: share,
+      extraTotal: extra,
+      totalPrice: group.subtotal + extra - share,
+    };
+  });
+
   return {
     services,
+    groups,
+    charges,
     packageId: pkg?.id ?? null,
     subtotal,
+    extraTotal,
     discount,
     manualDiscount: manual,
     packageDiscount,
     discountNote: notes.length > 0 ? notes.join(" · ") : null,
-    totalPrice: subtotal - discount,
+    totalPrice: subtotal + extraTotal - discount,
     totalDuration,
   };
 }
