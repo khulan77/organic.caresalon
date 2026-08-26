@@ -57,6 +57,12 @@ const PackageIcon = (
   </svg>
 );
 
+const ChartIcon = (
+  <svg viewBox="0 0 24 24" className="size-5 shrink-0" aria-hidden {...stroke}>
+    <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+  </svg>
+);
+
 const GearIcon = (
   <svg viewBox="0 0 24 24" className="size-5 shrink-0" aria-hidden {...stroke}>
     <circle cx="12" cy="12" r="3.2" />
@@ -87,7 +93,11 @@ export function AppRail({
 
   const items =
     effectiveRole === "ADMIN"
-      ? [...NAV, { href: "/settings", label: "Тохиргоо", icon: GearIcon }]
+      ? [
+          ...NAV,
+          { href: "/reports", label: "Тайлан", icon: ChartIcon },
+          { href: "/settings", label: "Тохиргоо", icon: GearIcon },
+        ]
       : NAV;
 
   const initial = user.name.trim().charAt(0).toUpperCase();
