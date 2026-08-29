@@ -128,7 +128,7 @@ export function ReceptionSection({
                     {!user.isActive ? (
                       <span className="text-sand-500">Идэвхгүй</span>
                     ) : user.mustChangePassword ? (
-                      <span className="text-[#8a6d3b]">Нууц үг солиогүй</span>
+                      <span className="text-warn-600">Нууц үг солиогүй</span>
                     ) : user.lastLoginAt ? (
                       <span className="text-sand-500">Нэвтэрсэн</span>
                     ) : (
@@ -193,7 +193,7 @@ export function ReceptionSection({
                             run(() => deleteUser(user.id));
                           }
                         }}
-                        className="text-[#9a4b4b] hover:underline disabled:opacity-50"
+                        className="text-danger-600 hover:underline disabled:opacity-50"
                       >
                         Устгах
                       </button>

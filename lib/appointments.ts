@@ -213,15 +213,15 @@ export async function validateSlot(input: SlotInput): Promise<SlotIssue[]> {
  * Захиалгын үйлчилгээ, хугацаа, үнийг СЕРВЕР ДЭЭР эцэслэн тооцно.
  *
  * Клиентээс ирсэн үнэ/хугацаанд НАЙДАХГҮЙ — бүгдийг сангаас дахин уншина.
- * Багц сонгосон бол түүний бүх үйлчилгээ заавал орно.
+ * Захиалгын түвшинд хөнгөлөлт БАЙХГҮЙ — үнэ нь үйлчилгээний жагсаалтын
+ * (хямдралтай бол хямдралтай) үнээр шууд бодогдоно.
  */
 export async function resolveBooking(input: {
+  /** Аль салбарын захиалга — өөр салбарын үйлчилгээ орохоос сэргийлнэ */
+  branchId: string;
   serviceIds: string[];
-  packageId?: string | null;
-  /** Гараар өгсөн нэмэлт хөнгөлөлт, төгрөгөөр */
-  manualDiscount?: number;
   /** Гараар нэмсэн нэмэлт төлбөрүүд (урт хумс, материал г.м.) */
-  charges?: { label: string; amount: number }[];
+  charges?: { amount: number }[];
   /**
    * Үйлчилгээ бүрийг ХЭН хийх — `serviceIds`-тай ИЖИЛ дараалалтай.
    * Хоосон эсвэл дутуу бол `primaryStaffId` руу унана.
@@ -230,39 +230,20 @@ export async function resolveBooking(input: {
   /** Үндсэн ажилтан — хуваарилагдаагүй үйлчилгээ бүгд түүнд очно. */
   primaryStaffId: string;
 }) {
-  const pkg = input.packageId
-    ? await prisma.package.findUnique({
-        where: { id: input.packageId },
-        select: {
-          id: true,
-          name: true,
-          price: true,
-          isActive: true,
-          items: {
-            orderBy: { sortOrder: "asc" },
-            select: { serviceId: true },
-          },
-        },
-      })
-    : null;
-
-  if (input.packageId && (!pkg || !pkg.isActive)) {
-    throw new Error("Сонгосон багц олдсонгүй эсвэл идэвхгүй болсон байна.");
-  }
-
-  // Багцын үйлчилгээнүүд эхэнд, дараа нь нэмэлтээр сонгосон нь
-  const packageServiceIds = pkg?.items.map((i) => i.serviceId) ?? [];
-  const extraIds = input.serviceIds.filter(
-    (id) => !packageServiceIds.includes(id),
-  );
-  const orderedIds = [...packageServiceIds, ...extraIds];
+  // Давхардлыг арилгаж, оруулсан дарааллыг хадгална
+  const orderedIds = [...new Set(input.serviceIds)];
 
   if (orderedIds.length === 0) {
     throw new Error("Хамгийн багадаа нэг үйлчилгээ сонгоно уу.");
   }
 
+  // Тухайн салбарын ба бүх салбарт нийтлэг үйлчилгээ л зөвшөөрөгдөнө
   const found = await prisma.service.findMany({
-    where: { id: { in: orderedIds }, isActive: true },
+    where: {
+      id: { in: orderedIds },
+      isActive: true,
+      OR: [{ branchId: null }, { branchId: input.branchId }],
+    },
     select: {
       id: true,
       name: true,
@@ -279,7 +260,9 @@ export async function resolveBooking(input: {
   const services = orderedIds.map((id) => {
     const service = byId.get(id);
     if (!service) {
-      throw new Error("Сонгосон үйлчилгээ олдсонгүй эсвэл идэвхгүй болсон байна.");
+      throw new Error(
+        "Сонгосон үйлчилгээ олдсонгүй, идэвхгүй болсон эсвэл өөр салбарынх байна.",
+      );
     }
     return {
       id: service.id,
@@ -292,32 +275,16 @@ export async function resolveBooking(input: {
 
   const subtotal = services.reduce((sum, s) => sum + s.price, 0);
 
-  // Нэмэлт төлбөр — хоосон нэр, тэг/сөрөг дүнг шүүнэ. Хугацаанд нөлөөлөхгүй.
+  // Нэмэлт төлбөр — тэг/сөрөг дүнг шүүнэ. Хугацаанд нөлөөлөхгүй.
+  // Тайлбар асуухгүй — зөвхөн дүн. Түүхэнд нэг жигд нэрээр үлдэнэ.
   const charges = (input.charges ?? [])
-    .map((charge) => ({
-      label: charge.label.trim().slice(0, 80),
-      amount: Math.round(charge.amount),
-    }))
-    .filter((charge) => charge.label.length > 0 && charge.amount > 0);
+    .map((charge) => ({ amount: Math.round(charge.amount) }))
+    .filter((charge) => charge.amount > 0);
   const extraTotal = charges.reduce((sum, charge) => sum + charge.amount, 0);
 
-  // Багцын хөнгөлөлт — зөвхөн багцад орсон үйлчилгээнүүдээс тооцно
-  const packageSubtotal = services
-    .filter((s) => packageServiceIds.includes(s.id))
-    .reduce((sum, s) => sum + s.price, 0);
-  const packageDiscount = pkg ? Math.max(0, packageSubtotal - pkg.price) : 0;
-
-  const manual = Math.max(0, Math.round(input.manualDiscount ?? 0));
-  // Хөнгөлөлт нь ҮЙЛЧИЛГЭЭНИЙ дүнгээс хэтрэхгүй — нэмэлт төлбөр (материалын
-  // зардал) хөнгөлөлтөөр арчигдаж болохгүй.
-  const discount = Math.min(subtotal, packageDiscount + manual);
-
-  const notes: string[] = [];
-  if (packageDiscount > 0 && pkg) notes.push(`Багц: ${pkg.name}`);
-
   // ── Үйлчилгээг ажилтнаар нь хуваах ──
-  // Оруулсан дараалал: багцынх эхэлж, дараа нь нэмэлт. Хуваарилалт нь
-  // ХЭРЭГЛЭГЧИЙН оруулсан `serviceIds` дарааллаар ирдэг тул индексээр таарна.
+  // Хуваарилалт нь ХЭРЭГЛЭГЧИЙН оруулсан `serviceIds` дарааллаар ирдэг тул
+  // индексээр таарна.
   const staffOf = new Map<string, string>();
   input.serviceIds.forEach((serviceId, index) => {
     const staffId = input.serviceStaffIds?.[index];
@@ -366,32 +333,15 @@ export async function resolveBooking(input: {
     0,
   );
 
-  /**
-   * Хөнгөлөлтийг мөр бүрийн үйлчилгээний дүнгээр ХУВЬ ТЭНЦҮҮЛЭН хуваарилна.
-   * Ингэснээр `totalPrice`-ийн нийлбэр бүлгийн бодит дүнтэй таарч, ажилтан
-   * тус бүрийн орлого ч зөв гарна. Мөнгө алдагдахгүйн тулд бүхэлчилсний
-   * үлдэгдлийг эхний (үндсэн) мөрөнд өгнө.
-   */
-  let allocated = 0;
   const groups = ordered.map((group, index) => {
-    const isLast = index === ordered.length - 1;
-    const share =
-      subtotal === 0
-        ? 0
-        : isLast
-          ? discount - allocated
-          : Math.floor((discount * group.subtotal) / subtotal);
-    allocated += share;
-
     // Нэмэлт төлбөр бүхэлдээ үндсэн мөрөнд — материалын зардал хуваагдахгүй
     const extra = index === 0 ? extraTotal : 0;
 
     return {
       ...group,
       isPrimary: index === 0,
-      discount: share,
       extraTotal: extra,
-      totalPrice: group.subtotal + extra - share,
+      totalPrice: group.subtotal + extra,
     };
   });
 
@@ -399,14 +349,9 @@ export async function resolveBooking(input: {
     services,
     groups,
     charges,
-    packageId: pkg?.id ?? null,
     subtotal,
     extraTotal,
-    discount,
-    manualDiscount: manual,
-    packageDiscount,
-    discountNote: notes.length > 0 ? notes.join(" · ") : null,
-    totalPrice: subtotal + extraTotal - discount,
+    totalPrice: subtotal + extraTotal,
     totalDuration,
   };
 }

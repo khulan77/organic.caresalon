@@ -34,6 +34,34 @@
 
   /* Хуудасны гадна тал — агуулга үүн дээр хөвж харагдана */
   --color-shell: #e9e6e0;
+
+  /* ── Төлөвийн өнгө ──
+     Энэ дөрөв нь БҮХ мессеж, шошго, товчинд хэрэглэгдэнэ. Шинэ өнгө
+     зохиохын оронд эднийг ашиглавал дэлгэц бүр адилхан харагдана. */
+
+  /* Амжилт / төлөгдсөн */
+  --color-ok-50: #eef5f0;
+  --color-ok-100: #dee6e0;
+  --color-ok-200: #c2dccd;
+  --color-ok-500: #4f9a6a;
+  --color-ok-600: #43855b;
+  --color-ok-700: #3e5a47;
+
+  /* Анхааруулга / дутуу төлсөн / ирээгүй */
+  --color-warn-50: #f6ead9;
+  --color-warn-200: #e8d3b2;
+  --color-warn-600: #986438;
+  --color-warn-700: #7d5330;
+
+  /* Алдаа / цуцлагдсан / устгах */
+  --color-danger-50: #f6e8e8;
+  --color-danger-200: #e6cfcf;
+  --color-danger-600: #9a5555;
+  --color-danger-700: #7d4646;
+
+  /* Мэдээлэл / ирсэн */
+  --color-info-50: #dff0ec;
+  --color-info-600: #3f7a6e;
 }
 
 html,
@@ -46,6 +74,34 @@ body {
   color: var(--color-sand-900);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* Гар утсанд дарахад гарах саарал гэрэлтэлтийг болиулна */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Гар утсанд хэвтээ гүйлт гарахаас сэргийлнэ — хуанли дотроо гүйлгэнэ */
+body {
+  overflow-x: hidden;
+}
+
+/*
+  Гараар (Tab) явахад л фокусын хүрээ гарна — хулганаар дарахад гарахгүй.
+  Ингэснээр хүртээмж хадгалагдаж, дэлгэц цэвэрхэн харагдана.
+*/
+:focus-visible {
+  outline: 2px solid var(--color-brand-500);
+  outline-offset: 2px;
+}
+
+/* Хөдөлгөөн багасгах тохиргоотой хэрэглэгчид анимац харуулахгүй */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* Нарийн, намуухан scrollbar */

@@ -84,7 +84,6 @@ export async function getDaySchedule(branchId: string, dateKey: DateKey) {
         discount: true,
         discountNote: true,
         totalPrice: true,
-        packageId: true,
         client: { select: { id: true, name: true, phone: true, note: true } },
         // Нэмэлт төлбөр — захиалгын цонхонд засагдана
         charges: {
@@ -163,16 +162,24 @@ export async function getRangeOverview(
   return { appointments, staffCount };
 }
 
-/** Захиалга үүсгэх цонхонд хэрэгтэй үйлчилгээний жагсаалт. */
-export async function getServiceCatalog() {
-  return prisma.serviceCategory.findMany({
+/**
+ * Захиалга үүсгэх цонхонд хэрэгтэй үйлчилгээний жагсаалт.
+ *
+ * Тухайн САЛБАРЫН үйлчилгээ ба бүх салбарт нийтлэг (branchId = null)
+ * үйлчилгээнүүд л орно. Хоосон үлдсэн ангиллыг гаргахгүй.
+ */
+export async function getServiceCatalog(branchId: string) {
+  const categories = await prisma.serviceCategory.findMany({
     orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
     select: {
       id: true,
       name: true,
       color: true,
       services: {
-        where: { isActive: true },
+        where: {
+          isActive: true,
+          OR: [{ branchId: null }, { branchId }],
+        },
         orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
         select: {
           id: true,
@@ -186,40 +193,9 @@ export async function getServiceCatalog() {
       },
     },
   });
-}
 
-/** Захиалгын цонх ба багцын хуудсанд — идэвхтэй багцууд. */
-export async function getPackages() {
-  return prisma.package.findMany({
-    where: { isActive: true },
-    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      price: true,
-      color: true,
-      items: {
-        orderBy: { sortOrder: "asc" },
-        select: {
-          serviceId: true,
-          service: {
-            select: {
-              id: true,
-              name: true,
-              price: true,
-              salePrice: true,
-              saleEndsAt: true,
-              durationMin: true,
-            },
-          },
-        },
-      },
-    },
-  });
+  return categories.filter((category) => category.services.length > 0);
 }
-
-export type PackageList = Awaited<ReturnType<typeof getPackages>>;
 
 /** Админы удирдлагын хуудсанд — идэвхгүйг ч оруулаад бүх үйлчилгээ. */
 export async function getServiceAdmin() {
@@ -231,7 +207,7 @@ export async function getServiceAdmin() {
       color: true,
       sortOrder: true,
       services: {
-        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+        orderBy: [{ branchId: "asc" }, { sortOrder: "asc" }, { name: "asc" }],
         select: {
           id: true,
           name: true,
@@ -241,7 +217,9 @@ export async function getServiceAdmin() {
           durationMin: true,
           color: true,
           isActive: true,
-          _count: { select: { items: true, packages: true } },
+          branchId: true,
+          branch: { select: { name: true } },
+          _count: { select: { items: true } },
         },
       },
     },
@@ -249,40 +227,6 @@ export async function getServiceAdmin() {
 }
 
 export type ServiceAdmin = Awaited<ReturnType<typeof getServiceAdmin>>;
-
-/** Багцын удирдлагын хуудсанд — идэвхгүйг ч оруулаад. */
-export async function getPackageAdmin() {
-  return prisma.package.findMany({
-    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      price: true,
-      color: true,
-      isActive: true,
-      _count: { select: { appointments: true } },
-      items: {
-        orderBy: { sortOrder: "asc" },
-        select: {
-          serviceId: true,
-          service: {
-            select: {
-              id: true,
-              name: true,
-              price: true,
-              salePrice: true,
-              saleEndsAt: true,
-              durationMin: true,
-            },
-          },
-        },
-      },
-    },
-  });
-}
-
-export type PackageAdmin = Awaited<ReturnType<typeof getPackageAdmin>>;
 
 /** Ажилтны хуудас — салбараар бүлэглэсэн, хуваарь ба чөлөөтэй нь. */
 export async function getStaffAdmin() {

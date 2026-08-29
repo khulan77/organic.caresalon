@@ -134,8 +134,6 @@ async function main() {
   // Дахин ажиллуулахад цэвэрхэн эхлэхийн тулд хамаарлын дарааллаар устгана
   await prisma.appointmentService.deleteMany();
   await prisma.appointment.deleteMany();
-  await prisma.packageService.deleteMany();
-  await prisma.package.deleteMany();
   await prisma.staffTimeOff.deleteMany();
   await prisma.staffSchedule.deleteMany();
   await prisma.staff.deleteMany();
@@ -262,51 +260,6 @@ async function main() {
     }
   }
   console.log(`  ✓ ${CATEGORIES.length} ангилал, ${serviceCount} үйлчилгээ`);
-
-  // ─── Багц ───
-  const PACKAGES = [
-    {
-      name: "Гар хөлний иж бүрдэл",
-      description: "Маникюр, педикюр хоёрыг хамтад нь",
-      price: 50000,
-      color: C.rose,
-      services: ["Маникюр", "Педикюр"],
-    },
-    {
-      name: "Гель иж бүрдэл",
-      description: "Гар хөлийн гель будалт",
-      price: 85000,
-      color: C.gold,
-      services: ["Гель будалт", "Гель педикюр"],
-    },
-    {
-      name: "Гоо сайхны өдөр",
-      description: "Сормуус суулгалт, маникюр, гарын спа",
-      price: 115000,
-      color: C.lavender,
-      services: ["Сормуус суулгалт", "Маникюр", "Гарын спа"],
-    },
-  ];
-
-  for (const [index, p] of PACKAGES.entries()) {
-    await prisma.package.create({
-      data: {
-        name: p.name,
-        description: p.description,
-        price: p.price,
-        color: p.color,
-        sortOrder: index,
-        items: {
-          create: p.services.map((name, order) => {
-            const service = byName.get(name);
-            if (!service) throw new Error(`Багцын үйлчилгээ олдсонгүй: ${name}`);
-            return { serviceId: service.id, sortOrder: order };
-          }),
-        },
-      },
-    });
-  }
-  console.log(`  ✓ ${PACKAGES.length} багц`);
 
   // ─── Үйлчлүүлэгч ───
   const clientSeed = [

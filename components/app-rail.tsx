@@ -6,7 +6,6 @@ import { useState } from "react";
 import { logout } from "@/app/login/actions";
 import { ROLE_LABELS } from "@/lib/labels";
 import type { CurrentUser } from "@/lib/session";
-import type { Role } from "@/lib/generated/prisma/enums";
 
 type NavItem = {
   href: string;
@@ -50,10 +49,10 @@ const ListIcon = (
   </svg>
 );
 
-const PackageIcon = (
+const ClockIcon = (
   <svg viewBox="0 0 24 24" className="size-5 shrink-0" aria-hidden {...stroke}>
-    <path d="M12 3 4 7v10l8 4 8-4V7z" />
-    <path d="M4 7l8 4 8-4M12 11v10" />
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M12 7.5V12l3 1.8" />
   </svg>
 );
 
@@ -75,16 +74,9 @@ const NAV: NavItem[] = [
   { href: "/clients", label: "Үйлчлүүлэгч", icon: PersonIcon },
   { href: "/staff", label: "Ажилтан", icon: PeopleIcon },
   { href: "/services", label: "Үйлчилгээ", icon: ListIcon },
-  { href: "/packages", label: "Багц", icon: PackageIcon },
 ];
 
-export function AppRail({
-  user,
-  effectiveRole,
-}: {
-  user: CurrentUser;
-  effectiveRole: Role;
-}) {
+export function AppRail({ user }: { user: CurrentUser }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -92,9 +84,10 @@ export function AppRail({
   const expanded = open || menuOpen;
 
   const items =
-    effectiveRole === "ADMIN"
+    user.role === "ADMIN"
       ? [
           ...NAV,
+          { href: "/timesheet", label: "Цагийн бүртгэл", icon: ClockIcon },
           { href: "/reports", label: "Тайлан", icon: ChartIcon },
           { href: "/settings", label: "Тохиргоо", icon: GearIcon },
         ]
@@ -199,7 +192,7 @@ export function AppRail({
               {user.name}
             </span>
             <span className="block whitespace-nowrap text-xs text-white/50">
-              {ROLE_LABELS[effectiveRole]}
+              {ROLE_LABELS[user.role]}
             </span>
           </span>
         </button>
@@ -225,7 +218,7 @@ export function AppRail({
                 {user.name}
               </p>
               <p className="text-xs text-sand-500">
-                {ROLE_LABELS[effectiveRole]} · {user.phone}
+                {ROLE_LABELS[user.role]} · {user.phone}
               </p>
             </div>
             <form action={logout}>

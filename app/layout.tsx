@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono, Source_Serif_4 } from "next/font/google";
 import "./globals.css";
 
@@ -26,6 +26,18 @@ const jetbrains = JetBrains_Mono({
   weight: ["400", "500"],
   display: "swap",
 });
+
+/**
+ * Гар утасны дэлгэцэд зөв тохирох тохиргоо.
+ * `viewportFit: "cover"` нь ирмэгтэй (notch) утсанд бүтэн дэлгэцийг ашиглана;
+ * доод талын аюулгүй зайг `env(safe-area-inset-*)` -ээр тооцно.
+ */
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#354b3c",
+};
 
 export const metadata: Metadata = {
   title: {

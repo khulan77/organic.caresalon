@@ -12,7 +12,6 @@ import {
 import type {
   DayAppointment,
   DayStaff,
-  PackageList,
   ServiceCatalog,
 } from "@/lib/queries";
 import { STATUS_LABELS, formatDuration, formatPrice } from "@/lib/labels";
@@ -25,6 +24,7 @@ import {
   deletePayment,
   findClients,
   setAppointmentStatus,
+  settleAppointment,
   updateAppointment,
 } from "@/app/(app)/calendar/actions";
 import {
@@ -39,6 +39,8 @@ import type {
   PaymentMethod,
 } from "@/lib/generated/prisma/enums";
 import { Field, Issues, inputClass } from "@/components/ui/form";
+import { CopyButton } from "@/components/ui/copy-button";
+import { buildBookingText } from "@/lib/booking-text";
 
 export type DialogState =
   | {
@@ -75,12 +77,28 @@ type ClientOption = {
 type Props = {
   state: DialogState;
   staff: DayStaff[];
+  /** Мессежид оруулах салбарын нэр */
+  branchName: string;
   catalog: ServiceCatalog;
-  packages: PackageList;
   /** Худал бол зөвхөн харах — бүх талбар идэвхгүй, хадгалах товч гарахгүй */
   canWrite: boolean;
   onClose: () => void;
 };
+
+/** Цаг сонголтын алхам — 30 минут. */
+const SLOT_STEP = 30;
+
+/** 00:00–23:30 хүртэлх 30 минутын цагууд. */
+const START_TIMES = Array.from(
+  { length: (24 * 60) / SLOT_STEP },
+  (_, index) => index * SLOT_STEP,
+);
+
+/** Дурын минутыг хамгийн ойрын 30 минутын нүд рүү буулгана. */
+function nearestSlot(minutes: number): string {
+  const snapped = Math.round(minutes / SLOT_STEP) * SLOT_STEP;
+  return formatMinutes(Math.min(snapped, 24 * 60 - SLOT_STEP));
+}
 
 const STATUS_FLOW: AppointmentStatus[] = [
   "BOOKED",
@@ -94,8 +112,8 @@ const STATUS_FLOW: AppointmentStatus[] = [
 export function AppointmentDialog({
   state,
   staff,
+  branchName,
   catalog,
-  packages,
   canWrite,
   onClose,
 }: Props) {
@@ -114,34 +132,19 @@ export function AppointmentDialog({
   );
   const [creatingClient, setCreatingClient] = useState(false);
 
-  const [packageId, setPackageId] = useState<string | null>(
-    editing?.packageId ?? null,
-  );
-
-  const activePackage = packages.find((p) => p.id === packageId) ?? null;
-  const packageServiceIds = useMemo(
-    () => activePackage?.items.map((item) => item.serviceId) ?? [],
-    [activePackage],
-  );
-
   /**
-   * Багцаас гадуур нэмж сонгосон үйлчилгээнүүд.
+   * Сонгосон үйлчилгээнүүд.
    * Засварлах үед үйлчилгээг НЭРЭЭР нь тааруулна — AppointmentService.id нь
    * Service.id-тэй ижил биш. Цонх нь `key`-ээр дахин үүсдэг тул анхны утгыг
    * энд шууд тооцоход хангалттай.
    */
-  const [extraIds, setExtraIds] = useState<string[]>(() => {
+  const [serviceIds, setServiceIds] = useState<string[]>(() => {
     if (!editing) return [];
-    const booked = siblings.flatMap((sibling) =>
+    return siblings.flatMap((sibling) =>
       sibling.items
         .map((item) => allServices.find((s) => s.name === item.name)?.id)
         .filter((id): id is string => Boolean(id)),
     );
-    const inPackage =
-      packages
-        .find((p) => p.id === editing.packageId)
-        ?.items.map((item) => item.serviceId) ?? [];
-    return booked.filter((id) => !inPackage.includes(id));
   });
 
   /**
@@ -159,15 +162,6 @@ export function AppointmentDialog({
       }
       return map;
     },
-  );
-
-  // Сервер рүү явах эцсийн жагсаалт — багцынх урд, нэмэлт нь ард
-  const serviceIds = useMemo(
-    () => [
-      ...packageServiceIds,
-      ...extraIds.filter((id) => !packageServiceIds.includes(id)),
-    ],
-    [packageServiceIds, extraIds],
   );
 
   const [primaryStaffId, setPrimaryStaffId] = useState(
@@ -206,47 +200,19 @@ export function AppointmentDialog({
     0,
   );
 
-  // Багцын хөнгөлөлт — зөвхөн багцад орсон үйлчилгээнүүдээс
-  const packageSubtotal = selectedServices
-    .filter((s) => packageServiceIds.includes(s.id))
-    .reduce((sum, s) => sum + effectivePrice(s), 0);
-  const packageDiscount = activePackage
-    ? Math.max(0, packageSubtotal - activePackage.price)
-    : 0;
-
-  // Хадгалсан хөнгөлөлтөөс багцынхыг хассан үлдэгдэл нь гараар өгсөн хөнгөлөлт
-  const [manualDiscount, setManualDiscount] = useState<string>(() => {
-    // Хөнгөлөлт бүлгийн мөрүүдэд хуваарилагдсан байдаг — нийлбэрээр нь буцаана
-    const groupDiscount = siblings.reduce((sum, row) => sum + row.discount, 0);
-    if (!editing || groupDiscount <= 0) return "";
-    const fromPackage = editing.packageId
-      ? (packages
-          .find((p) => p.id === editing.packageId)
-          ?.items.reduce(
-            (sum, item) => sum + effectivePrice(item.service),
-            0,
-          ) ?? 0) -
-        (packages.find((p) => p.id === editing.packageId)?.price ?? 0)
-      : 0;
-    const manual = groupDiscount - Math.max(0, fromPackage);
-    return manual > 0 ? String(manual) : "";
-  });
-  const manual = Number(manualDiscount.replace(/\D/g, "")) || 0;
-
   /**
    * Нэмэлт төлбөр — формын төлөвт барина. Хадгалахад бүхэлд нь дахин бичигдэнэ.
+   * Зөвхөн ДҮН: юуны төлбөр болохыг асуухгүй.
    * `key` нь зөвхөн React-ийн жагсаалтад зориулсан, сервер рүү явахгүй.
    */
-  const [charges, setCharges] = useState<
-    { key: string; label: string; amount: string }[]
-  >(() =>
-    editing
-      ? editing.charges.map((charge) => ({
-          key: charge.id,
-          label: charge.label,
-          amount: String(charge.amount),
-        }))
-      : [],
+  const [charges, setCharges] = useState<{ key: string; amount: string }[]>(
+    () =>
+      editing
+        ? editing.charges.map((charge) => ({
+            key: charge.id,
+            amount: String(charge.amount),
+          }))
+        : [],
   );
 
   const extraTotal = charges.reduce(
@@ -254,9 +220,8 @@ export function AppointmentDialog({
     0,
   );
 
-  // Хөнгөлөлт нь үйлчилгээний дүнгээс хэтрэхгүй (сервертэй ижил дүрэм)
-  const discount = Math.min(subtotal, packageDiscount + manual);
-  const totalPrice = subtotal + extraTotal - discount;
+  // Захиалгын түвшинд хөнгөлөлт байхгүй — үйлчилгээ + нэмэлт төлбөр
+  const totalPrice = subtotal + extraTotal;
 
   // ── Төлбөрийн байдал (зөвхөн засварлах үед — шинэ захиалга хараахан байхгүй)
   const payments = editing?.payments ?? [];
@@ -265,17 +230,14 @@ export function AppointmentDialog({
   function addChargeRow() {
     setCharges((current) => [
       ...current,
-      { key: `new-${Date.now()}-${current.length}`, label: "", amount: "" },
+      { key: `new-${Date.now()}-${current.length}`, amount: "" },
     ]);
   }
 
-  function updateChargeRow(
-    key: string,
-    patch: Partial<{ label: string; amount: string }>,
-  ) {
+  function updateChargeRow(key: string, amount: string) {
     setCharges((current) =>
       current.map((charge) =>
-        charge.key === key ? { ...charge, ...patch } : charge,
+        charge.key === key ? { ...charge, amount } : charge,
       ),
     );
   }
@@ -308,9 +270,7 @@ export function AppointmentDialog({
       : state.startMin;
 
   function toggleService(id: string) {
-    // Багцын бүрэлдэхүүнийг тусад нь салгахгүй — багцаа болиулж салгана
-    if (packageServiceIds.includes(id)) return;
-    setExtraIds((current) =>
+    setServiceIds((current) =>
       current.includes(id)
         ? current.filter((serviceId) => serviceId !== id)
         : [...current, id],
@@ -336,7 +296,7 @@ export function AppointmentDialog({
               ? "Шинэ цаг захиалга"
               : "Цаг захиалга засах"
         }
-        className="relative flex max-h-[92vh] w-full max-w-2xl flex-col rounded-t-2xl bg-white shadow-xl sm:rounded-2xl"
+        className="relative flex max-h-[92dvh] w-full max-w-2xl flex-col rounded-t-2xl bg-white shadow-xl sm:max-h-[92vh] sm:rounded-2xl"
       >
         <header className="flex shrink-0 items-start justify-between gap-3 border-b border-sand-200 px-5 py-4">
           <div>
@@ -359,14 +319,41 @@ export function AppointmentDialog({
               </span>
             ) : null}
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Хаах"
-            className="rounded-lg p-1.5 text-sand-500 transition hover:bg-sand-100 hover:text-sand-800"
-          >
-            ✕
-          </button>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {editing ? (
+              <CopyButton
+                label="Хуулах"
+                title="Үйлчлүүлэгч рүү илгээх баталгаажуулалтыг хуулах"
+                getText={() =>
+                  buildBookingText({
+                    clientName: editing.client.name,
+                    branchName,
+                    startAt: editing.startAt,
+                    endAt: editing.endAt,
+                    lines: siblings.map((sibling) => ({
+                      staffName:
+                        staff.find((m) => m.id === sibling.staffId)?.name ?? "—",
+                      items: sibling.items,
+                    })),
+                    extraTotal: editing.extraTotal,
+                    totalPrice: siblings.reduce(
+                      (sum, row) => sum + row.totalPrice,
+                      0,
+                    ),
+                    paid: money.paid,
+                  })
+                }
+              />
+            ) : null}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Хаах"
+              className="rounded-lg p-1.5 text-sand-500 transition hover:bg-sand-100 hover:text-sand-800"
+            >
+              ✕
+            </button>
+          </div>
         </header>
 
         <form
@@ -377,9 +364,6 @@ export function AppointmentDialog({
           {editing ? (
             <input type="hidden" name="appointmentId" value={editing.id} />
           ) : null}
-          {packageId ? (
-            <input type="hidden" name="packageId" value={packageId} />
-          ) : null}
           {/* Үйлчилгээ ба түүнийг хийх ажилтан — сервер индексээр нь хослуулна */}
           {serviceIds.map((id) => (
             <Fragment key={id}>
@@ -387,7 +371,6 @@ export function AppointmentDialog({
               <input type="hidden" name="serviceStaffId" value={staffOf(id)} />
             </Fragment>
           ))}
-          <input type="hidden" name="discount" value={String(manual)} />
           {selectedClient && !creatingClient ? (
             <input type="hidden" name="clientId" value={selectedClient.id} />
           ) : null}
@@ -397,7 +380,7 @@ export function AppointmentDialog({
             className="min-w-0 space-y-5 px-5 py-4 disabled:opacity-90"
           >
             {!canWrite ? (
-              <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-amber-200">
+              <p className="rounded-lg bg-warn-50 px-3 py-2 text-sm text-warn-700 ring-1 ring-warn-200">
                 Өөр салбарын захиалга — зөвхөн харна. Өөрчлөх бол тухайн
                 салбарын ресепшн эсвэл админд хандана уу.
               </p>
@@ -424,48 +407,6 @@ export function AppointmentDialog({
               />
             </section>
 
-            {/* Багц */}
-            {packages.length > 0 ? (
-              <section>
-                <SectionTitle>Багц</SectionTitle>
-                <div className="flex flex-wrap gap-1.5">
-                  {packages.map((pkg) => {
-                    const active = pkg.id === packageId;
-                    const color = pkg.color ?? "#a39887";
-                    return (
-                      <button
-                        key={pkg.id}
-                        type="button"
-                        aria-pressed={active}
-                        onClick={() => setPackageId(active ? null : pkg.id)}
-                        className={`rounded-lg border px-3 py-2 text-left text-xs transition hover:bg-sand-50 ${
-                          active ? "" : "border-sand-300 text-sand-700"
-                        }`}
-                        style={
-                          active
-                            ? {
-                                borderColor: color,
-                                backgroundColor: `color-mix(in srgb, ${color} 10%, white)`,
-                              }
-                            : undefined
-                        }
-                      >
-                        <span
-                          className="block font-medium"
-                          style={{ color: active ? color : undefined }}
-                        >
-                          {pkg.name}
-                        </span>
-                        <span className="block text-[11px] text-sand-500">
-                          {pkg.items.length} үйлчилгээ · {formatPrice(pkg.price)}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </section>
-            ) : null}
-
             {/* Үйлчилгээ */}
             <section>
               <SectionTitle>
@@ -490,7 +431,6 @@ export function AppointmentDialog({
                     </p>
                     <div className="flex flex-wrap gap-1.5">
                       {category.services.map((service) => {
-                        const inPackage = packageServiceIds.includes(service.id);
                         const active = serviceIds.includes(service.id);
                         const color = service.color ?? category.color;
                         const sale = isSaleActive(service);
@@ -500,14 +440,11 @@ export function AppointmentDialog({
                             type="button"
                             onClick={() => toggleService(service.id)}
                             aria-pressed={active}
-                            title={
-                              inPackage
-                                ? "Багцад орсон — салгах бол багцаа болиулна уу"
-                                : undefined
-                            }
-                            className={`rounded-lg border px-3 py-2 text-left text-xs transition ${
-                              inPackage ? "cursor-default" : "hover:bg-sand-50"
-                            } ${active ? "" : "border-sand-300 text-sand-700"}`}
+                            className={`rounded-xl border px-3 py-2 text-left text-xs transition active:scale-[0.98] ${
+                              active
+                                ? "shadow-sm"
+                                : "border-sand-300 text-sand-700 hover:border-sand-400 hover:bg-sand-50"
+                            }`}
                             style={
                               active
                                 ? {
@@ -522,9 +459,6 @@ export function AppointmentDialog({
                               style={{ color: active ? color : undefined }}
                             >
                               {service.name}
-                              {inPackage ? (
-                                <span className="ml-1 text-sand-400">· багц</span>
-                              ) : null}
                             </span>
                             <span className="block text-[11px] text-sand-500">
                               {formatDuration(service.durationMin)} ·{" "}
@@ -533,7 +467,7 @@ export function AppointmentDialog({
                                   <span className="line-through">
                                     {formatPrice(service.price)}
                                   </span>{" "}
-                                  <span className="font-medium text-[#986438]">
+                                  <span className="font-medium text-warn-600">
                                     {formatPrice(service.salePrice as number)}
                                   </span>
                                 </>
@@ -583,14 +517,18 @@ export function AppointmentDialog({
                 />
               </Field>
 
-              <Field label="Эхлэх цаг">
-                <input
-                  type="time"
+              <Field label="Эхлэх цаг" hint="30 минутын алхамтай">
+                <select
                   name="startTime"
-                  step={900}
-                  defaultValue={formatMinutes(defaultStartMin)}
+                  defaultValue={nearestSlot(defaultStartMin)}
                   className={inputClass}
-                />
+                >
+                  {START_TIMES.map((minute) => (
+                    <option key={minute} value={formatMinutes(minute)}>
+                      {formatMinutes(minute)}
+                    </option>
+                  ))}
+                </select>
               </Field>
             </section>
 
@@ -698,35 +636,23 @@ export function AppointmentDialog({
                       {charges.map((charge) => (
                         <div
                           key={charge.key}
-                          className="flex flex-wrap items-center gap-2"
+                          className="flex items-center gap-2"
                         >
-                          <input
-                            type="text"
-                            name="chargeLabel"
-                            value={charge.label}
-                            onChange={(event) =>
-                              updateChargeRow(charge.key, {
-                                label: event.target.value,
-                              })
-                            }
-                            placeholder="Юуны төлбөр"
-                            maxLength={80}
-                            className={`${inputClass} min-w-[8rem] flex-1`}
-                          />
                           <input
                             type="number"
                             name="chargeAmount"
                             min={0}
                             step={1000}
+                            inputMode="numeric"
                             value={charge.amount}
                             onChange={(event) =>
-                              updateChargeRow(charge.key, {
-                                amount: event.target.value,
-                              })
+                              updateChargeRow(charge.key, event.target.value)
                             }
+                            aria-label="Нэмэлт төлбөрийн дүн"
                             placeholder="0"
-                            className={`${inputClass} w-28 shrink-0 text-right`}
+                            className={`${inputClass} min-w-0 flex-1 text-right sm:max-w-[12rem]`}
                           />
+                          <span className="shrink-0 text-sm text-sand-500">₮</span>
                           <button
                             type="button"
                             onClick={() => removeChargeRow(charge.key)}
@@ -741,40 +667,12 @@ export function AppointmentDialog({
                   )}
                 </div>
 
-                <div className="border-t border-sand-100 pt-3 sm:max-w-xs">
-                  <Field label="Нэмэлт хөнгөлөлт (₮)" hint="Тохиролцсон хямдрал">
-                    <input
-                      type="number"
-                      min={0}
-                      step={1000}
-                      value={manualDiscount}
-                      onChange={(event) => setManualDiscount(event.target.value)}
-                      placeholder="0"
-                      className={inputClass}
-                    />
-                  </Field>
-                </div>
-
                 <dl className="mt-3 space-y-1 border-t border-sand-100 pt-3 text-sm">
                   <Row label="Үйлчилгээ" value={formatPrice(subtotal)} />
                   {extraTotal > 0 ? (
                     <Row
                       label="Нэмэлт төлбөр"
                       value={`+ ${formatPrice(extraTotal)}`}
-                    />
-                  ) : null}
-                  {packageDiscount > 0 && activePackage ? (
-                    <Row
-                      label={`Багц: ${activePackage.name}`}
-                      value={`− ${formatPrice(packageDiscount)}`}
-                      accent
-                    />
-                  ) : null}
-                  {manual > 0 ? (
-                    <Row
-                      label="Нэмэлт хөнгөлөлт"
-                      value={`− ${formatPrice(manual)}`}
-                      accent
                     />
                   ) : null}
                   <div className="flex justify-between border-t border-sand-100 pt-1 font-semibold text-sand-900">
@@ -848,18 +746,11 @@ export function AppointmentDialog({
             ) : null}
           </fieldset>
 
-          <footer className="sticky bottom-0 flex shrink-0 items-center justify-between gap-3 border-t border-sand-200 bg-white px-5 py-3">
+          <footer className="sticky bottom-0 flex shrink-0 items-center justify-between gap-3 border-t border-sand-200 bg-white px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-3">
             <div className="text-sm">
               {selectedServices.length > 0 ? (
-                <span className="flex items-baseline gap-2">
-                  {discount > 0 ? (
-                    <span className="text-sand-400 line-through">
-                      {formatPrice(subtotal)}
-                    </span>
-                  ) : null}
-                  <span className="font-semibold text-sand-900">
-                    {formatPrice(totalPrice)}
-                  </span>
+                <span className="font-semibold text-sand-900">
+                  {formatPrice(totalPrice)}
                 </span>
               ) : (
                 <span className="text-sand-500">Үйлчилгээ сонгоно уу</span>
@@ -905,8 +796,8 @@ function Row({
 }) {
   return (
     <div className="flex justify-between">
-      <dt className={accent ? "text-[#3e5a47]" : "text-sand-600"}>{label}</dt>
-      <dd className={`tabular-nums ${accent ? "text-[#3e5a47]" : "text-sand-700"}`}>
+      <dt className={accent ? "text-ok-700" : "text-sand-600"}>{label}</dt>
+      <dd className={`tabular-nums ${accent ? "text-ok-700" : "text-sand-700"}`}>
         {value}
       </dd>
     </div>
@@ -939,6 +830,8 @@ function PaymentSection({
   const [method, setMethod] = useState<PaymentMethod>("CASH");
   const [isDeposit, setIsDeposit] = useState(false);
   const [isRemoving, startRemove] = useTransition();
+  const [isSettling, startSettle] = useTransition();
+  const [settleError, setSettleError] = useState<string | null>(null);
 
   // Амжилттай бүртгэсний дараа талбарыг цэвэрлэнэ.
   // Effect биш — рендерийн үед өмнөх үртэй харьцуулж тохируулна (React-ийн
@@ -959,6 +852,15 @@ function PaymentSection({
     data.set("method", method);
     if (isDeposit) data.set("isDeposit", "on");
     startTransition(() => formAction(data));
+  }
+
+  /** Үлдэгдлийг нэг товчоор бүтнээр нь төлөгдсөн болгоно. */
+  function settle() {
+    setSettleError(null);
+    startSettle(async () => {
+      const outcome = await settleAppointment(appointmentId, method);
+      if (!outcome.ok) setSettleError(outcome.issues.join(" "));
+    });
   }
 
   return (
@@ -1019,13 +921,50 @@ function PaymentSection({
                   })
                 }
                 aria-label="Төлбөр устгах"
-                className="shrink-0 rounded-lg p-1 text-sand-400 transition hover:bg-sand-100 hover:text-[#9a5555] disabled:opacity-50"
+                className="shrink-0 rounded-lg p-1 text-sand-400 transition hover:bg-sand-100 hover:text-danger-600 disabled:opacity-50"
               >
                 ✕
               </button>
             </li>
           ))}
         </ul>
+      ) : null}
+
+      {/* ── Нэг товчоор бүтэн төлөлт ── */}
+      {due > 0 ? (
+        <div className="mb-3 border-t border-sand-100 pt-3">
+          <button
+            type="button"
+            onClick={settle}
+            disabled={isSettling || isPending}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-ok-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-ok-600 active:scale-[0.99] disabled:opacity-50"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              className="size-4 shrink-0"
+              aria-hidden
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2.4}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="m5 13 4 4L19 7" />
+            </svg>
+            {isSettling
+              ? "Бүртгэж байна…"
+              : `Төлбөрөө төллөө — ${formatPrice(due)}`}
+          </button>
+          <p className="mt-1.5 text-center text-[11px] text-sand-500">
+            {PAYMENT_METHOD_LABELS[method]}-ээр үлдэгдлийг бүтнээр бүртгэнэ.
+            Хэлбэрийг доороос солино.
+          </p>
+          {settleError ? (
+            <p role="alert" className="mt-2 text-sm text-danger-600">
+              {settleError}
+            </p>
+          ) : null}
+        </div>
       ) : null}
 
       {/* ── Шинэ төлбөр ── */}
@@ -1143,7 +1082,7 @@ function ClientPicker({
           <p className="truncate font-medium text-sand-900">{selected.name}</p>
           <p className="truncate text-sm text-sand-600">{selected.phone}</p>
           {selected.note ? (
-            <p className="mt-1 truncate text-xs text-[#986438]">⚠ {selected.note}</p>
+            <p className="mt-1 truncate text-xs text-warn-600">⚠ {selected.note}</p>
           ) : null}
         </div>
         <button
@@ -1358,7 +1297,7 @@ function StatusControls({
               type="button"
               disabled={isPending}
               onClick={() => changeStatus(pendingCancel, reason)}
-              className="rounded-lg bg-[#9a5555] px-3 py-1.5 text-xs font-medium text-white transition hover:brightness-110 disabled:opacity-50"
+              className="rounded-lg bg-danger-600 px-3 py-1.5 text-xs font-medium text-white transition hover:brightness-110 disabled:opacity-50"
             >
               {isPending ? "Хадгалж байна…" : "Баталгаажуулах"}
             </button>
@@ -1368,13 +1307,13 @@ function StatusControls({
 
       {/* ── Цуцлалтын түүх ── */}
       {appointment.cancelledAt ? (
-        <div className="mt-3 rounded-xl bg-[#f6e8e8] px-3 py-2 text-sm text-[#7d4646]">
+        <div className="mt-3 rounded-xl bg-danger-50 px-3 py-2 text-sm text-danger-700">
           <p>
             <strong>{STATUS_LABELS[appointment.status].label}</strong>
             {appointment.cancelledBy
               ? ` — ${appointment.cancelledBy.name}`
               : ""}
-            <span className="text-[#9a7070]">
+            <span className="text-danger-600/70">
               {" · "}
               {toDateKey(appointment.cancelledAt)}{" "}
               {formatMinutes(toLocalMinutes(appointment.cancelledAt))}
@@ -1385,14 +1324,14 @@ function StatusControls({
           ) : null}
 
           {replacement ? (
-            <p className="mt-1.5 border-t border-[#e6cfcf] pt-1.5 text-[13px] text-[#5c5850]">
+            <p className="mt-1.5 border-t border-danger-200 pt-1.5 text-[13px] text-sand-600">
               Энэ цагийг <strong>{replacement.clientName}</strong> авсан (
               {formatMinutes(replacement.startMin)}–
               {formatMinutes(replacement.endMin)}, бүртгэсэн{" "}
               {toDateKey(replacement.bookedAt)}).
             </p>
           ) : (
-            <p className="mt-1.5 border-t border-[#e6cfcf] pt-1.5 text-[13px] text-[#5c5850]">
+            <p className="mt-1.5 border-t border-danger-200 pt-1.5 text-[13px] text-sand-600">
               Энэ цаг одоогоор сул байна.
             </p>
           )}
@@ -1400,7 +1339,7 @@ function StatusControls({
       ) : null}
 
       {error ? (
-        <p role="alert" className="mt-2 text-sm text-[#9a5555]">
+        <p role="alert" className="mt-2 text-sm text-danger-600">
           {error}
         </p>
       ) : null}
@@ -1409,7 +1348,7 @@ function StatusControls({
         type="button"
         onClick={remove}
         disabled={isPending}
-        className="mt-3 text-sm text-[#9a5555] underline underline-offset-2 disabled:opacity-50"
+        className="mt-3 text-sm text-danger-600 underline underline-offset-2 disabled:opacity-50"
       >
         Захиалгыг устгах
       </button>

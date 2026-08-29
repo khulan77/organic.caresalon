@@ -35,17 +35,17 @@ const OVERLAP_MESSAGE =
   "Тухайн ажилтны цаг дөнгөж сая өөр захиалгаар дүүрлээ. Хуанлиа сэргээгээд өөр цаг сонгоно уу.";
 
 /**
- * Формоос нэмэлт төлбөрүүдийг уншина.
- * Нэр ба дүн нь ХОС талбар — индексээр нь хослуулна.
+ * Формоос нэмэлт төлбөрүүдийг уншина — зөвхөн дүн.
+ * Юуны төлбөр болохыг асуухгүй: ресепшн хурдан бүртгэх нь чухал.
  */
-function readCharges(formData: FormData): { label: string; amount: number }[] {
-  const labels = formData.getAll("chargeLabel").map(String);
-  const amounts = formData.getAll("chargeAmount").map(String);
-  return labels.map((label, index) => ({
-    label,
-    amount: Number((amounts[index] ?? "").replace(/[^\d-]/g, "")) || 0,
+function readCharges(formData: FormData): { amount: number }[] {
+  return formData.getAll("chargeAmount").map((value) => ({
+    amount: Number(String(value).replace(/[^\d-]/g, "")) || 0,
   }));
 }
+
+/** Нэмэлт төлбөрийн мөрөнд түүхэнд үлдэх нэг жигд нэр. */
+const CHARGE_LABEL = "Нэмэлт төлбөр";
 
 /** Төлбөрийн хэлбэрийг шалгаж авах — танихгүй утга ирвэл бэлэн гэж үзнэ. */
 function readMethod(value: unknown): PaymentMethod {
@@ -65,16 +65,13 @@ async function readSlotForm(formData: FormData) {
   const startTime = String(formData.get("startTime") ?? "");
   const note = String(formData.get("note") ?? "").trim() || null;
   const serviceIds = formData.getAll("serviceIds").map(String).filter(Boolean);
-  const packageId = String(formData.get("packageId") ?? "") || null;
-  const discountRaw = String(formData.get("discount") ?? "").replace(/\D/g, "");
-  const manualDiscount = discountRaw ? Number(discountRaw) : 0;
 
   if (!branchId) issues.push("Салбар сонгогдоогүй байна.");
   if (!staffId) issues.push("Ажилтан сонгоно уу.");
   if (!isDateKey(dateKey)) issues.push("Огноо буруу байна.");
   if (!/^\d{2}:\d{2}$/.test(startTime)) issues.push("Эхлэх цаг буруу байна.");
-  if (serviceIds.length === 0 && !packageId)
-    issues.push("Хамгийн багадаа нэг үйлчилгээ эсвэл багц сонгоно уу.");
+  if (serviceIds.length === 0)
+    issues.push("Хамгийн багадаа нэг үйлчилгээ сонгоно уу.");
 
   if (issues.length > 0) return { ok: false as const, issues };
 
@@ -88,8 +85,6 @@ async function readSlotForm(formData: FormData) {
     note,
     serviceIds,
     serviceStaffIds: formData.getAll("serviceStaffId").map(String),
-    packageId,
-    manualDiscount,
     charges: readCharges(formData),
   };
 }
@@ -181,11 +176,10 @@ export async function createAppointment(
   try {
     client = await resolveClient(formData);
     resolved = await resolveBooking({
+      branchId: form.branchId,
       serviceIds: form.serviceIds,
       serviceStaffIds: form.serviceStaffIds,
       primaryStaffId: form.staffId,
-      packageId: form.packageId,
-      manualDiscount: form.manualDiscount,
       charges: form.charges,
     });
   } catch (error) {
@@ -243,11 +237,8 @@ export async function createAppointment(
             note: form.note,
             groupId,
             isPrimary: group.isPrimary,
-            packageId: group.isPrimary ? resolved.packageId : null,
             subtotal: group.subtotal,
             extraTotal: group.extraTotal,
-            discount: group.discount,
-            discountNote: group.isPrimary ? resolved.discountNote : null,
             totalPrice: group.totalPrice,
             createdById: user.id,
             items: {
@@ -263,7 +254,7 @@ export async function createAppointment(
             charges: group.isPrimary
               ? {
                   create: resolved.charges.map((charge) => ({
-                    label: charge.label,
+                    label: CHARGE_LABEL,
                     amount: charge.amount,
                     createdById: user.id,
                   })),
@@ -350,11 +341,10 @@ export async function updateAppointment(
   try {
     client = await resolveClient(formData);
     resolved = await resolveBooking({
+      branchId: form.branchId,
       serviceIds: form.serviceIds,
       serviceStaffIds: form.serviceStaffIds,
       primaryStaffId: form.staffId,
-      packageId: form.packageId,
-      manualDiscount: form.manualDiscount,
       charges: form.charges,
     });
   } catch (error) {
@@ -406,11 +396,8 @@ export async function updateAppointment(
           note: form.note,
           groupId,
           isPrimary: true,
-          packageId: resolved.packageId,
           subtotal: first.subtotal,
           extraTotal: first.extraTotal,
-          discount: first.discount,
-          discountNote: resolved.discountNote,
           totalPrice: first.totalPrice,
           items: {
             create: first.services.map((service, index) => ({
@@ -423,7 +410,7 @@ export async function updateAppointment(
           },
           charges: {
             create: resolved.charges.map((charge) => ({
-              label: charge.label,
+              label: CHARGE_LABEL,
               amount: charge.amount,
               createdById: user.id,
             })),
@@ -443,7 +430,6 @@ export async function updateAppointment(
             isPrimary: false,
             subtotal: group.subtotal,
             extraTotal: 0,
-            discount: group.discount,
             totalPrice: group.totalPrice,
             createdById: user.id,
             items: {
@@ -606,6 +592,44 @@ export async function addPayment(
       method: readMethod(formData.get("method")),
       isDeposit: formData.get("isDeposit") === "on",
       note: String(formData.get("note") ?? "").trim() || null,
+      receivedById: guard.user.id,
+    },
+  });
+
+  refresh();
+  return { ok: true };
+}
+
+/**
+ * «Төлбөрөө төлсөн» — үлдэгдлийг нэг товчоор бүрэн бүртгэнэ.
+ *
+ * Дүнг СЕРВЕР ДЭЭР дахин тооцно: клиентээс ирсэн тоонд найдвал хуучирсан
+ * дэлгэц дутуу/илүү төлөлт бичих эрсдэлтэй.
+ */
+export async function settleAppointment(
+  appointmentId: string,
+  method: PaymentMethod,
+): Promise<ActionResult> {
+  const guard = await requirePayableAppointment(appointmentId);
+  if (!guard.ok) return { ok: false, issues: [guard.issue] };
+
+  const existing = await prisma.payment.aggregate({
+    where: { appointmentId },
+    _sum: { amount: true },
+  });
+  const due = guard.appointment.totalPrice - (existing._sum.amount ?? 0);
+
+  if (due <= 0) {
+    return { ok: false, issues: ["Энэ захиалга аль хэдийн бүрэн төлөгдсөн."] };
+  }
+
+  await prisma.payment.create({
+    data: {
+      appointmentId,
+      amount: due,
+      method: readMethod(method),
+      isDeposit: false,
+      note: "Бүрэн төлөлт",
       receivedById: guard.user.id,
     },
   });

@@ -1,7 +1,7 @@
 "use server";
 
 import { refresh } from "next/cache";
-import { getActionUser } from "@/lib/auth";
+import { requireAdminAction } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { ACTIVE_STATUSES } from "@/lib/labels";
 import { fail, readAmount, type ActionResult } from "@/lib/action-result";
@@ -15,14 +15,8 @@ import {
   weekdayOf,
 } from "@/lib/time";
 
-/** Ажилтан өөрчлөх эрхийг зөвхөн админд өгнө. */
-async function requireAdminAction() {
-  const user = await getActionUser();
-  if (user.role !== "ADMIN") {
-    throw new Error("Ажилтны мэдээлэл өөрчлөх эрх зөвхөн админд байна.");
-  }
-  return user;
-}
+/** Админаас өөр хүн энэ үйлдлийг оролдвол харагдах мессеж. */
+const ADMIN_ONLY = "Ажилтны мэдээлэл өөрчлөх эрх зөвхөн админд байна.";
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
 const TIME = /^\d{2}:\d{2}$/;
@@ -116,7 +110,8 @@ export async function saveStaff(
   _prev: ActionResult | null,
   formData: FormData,
 ): Promise<ActionResult> {
-  await requireAdminAction();
+  const guard = await requireAdminAction(ADMIN_ONLY);
+  if (!guard.ok) return guard;
 
   const id = String(formData.get("id") ?? "") || null;
   const name = String(formData.get("name") ?? "").trim();
@@ -207,7 +202,8 @@ export async function toggleStaff(
   id: string,
   isActive: boolean,
 ): Promise<ActionResult> {
-  await requireAdminAction();
+  const guard = await requireAdminAction(ADMIN_ONLY);
+  if (!guard.ok) return guard;
 
   if (!isActive) {
     const upcoming = await prisma.appointment.findMany({
@@ -234,7 +230,8 @@ export async function toggleStaff(
 
 /** Бүрмөсөн устгах — зөвхөн ямар ч захиалга аваагүй ажилтныг. */
 export async function deleteStaff(id: string): Promise<ActionResult> {
-  await requireAdminAction();
+  const guard = await requireAdminAction(ADMIN_ONLY);
+  if (!guard.ok) return guard;
 
   const staff = await prisma.staff.findUnique({
     where: { id },
@@ -259,7 +256,8 @@ export async function addTimeOff(
   _prev: ActionResult | null,
   formData: FormData,
 ): Promise<ActionResult> {
-  await requireAdminAction();
+  const guard = await requireAdminAction(ADMIN_ONLY);
+  if (!guard.ok) return guard;
 
   const staffId = String(formData.get("staffId") ?? "");
   const dateKey = String(formData.get("date") ?? "");
@@ -321,7 +319,8 @@ export async function addTimeOff(
 }
 
 export async function deleteTimeOff(id: string): Promise<ActionResult> {
-  await requireAdminAction();
+  const guard = await requireAdminAction(ADMIN_ONLY);
+  if (!guard.ok) return guard;
   await prisma.staffTimeOff.delete({ where: { id } });
   refresh();
   return { ok: true };

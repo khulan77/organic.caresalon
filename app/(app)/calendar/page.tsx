@@ -1,9 +1,7 @@
 import { requireUser } from "@/lib/auth";
-import { getEffectiveRole } from "@/lib/preview";
 import {
   getBranches,
   getDaySchedule,
-  getPackages,
   getRangeOverview,
   getServiceCatalog,
   type DaySchedule,
@@ -22,7 +20,6 @@ export const metadata = { title: "Хуанли" };
 
 export default async function CalendarPage(props: PageProps<"/calendar">) {
   const user = await requireUser();
-  const effectiveRole = await getEffectiveRole(user);
   const params = await props.searchParams;
 
   const branches = await getBranches();
@@ -52,24 +49,21 @@ export default async function CalendarPage(props: PageProps<"/calendar">) {
 
   // Ресепшн бусад салбарын хуанлийг ХАРНА, гэхдээ зөвхөн харьяа салбартаа
   // бүртгэнэ. Энэ нь зөвхөн UI — жинхэнэ хориг server action дотор (lib/auth).
-  const canWrite = effectiveRole === "ADMIN" || user.branchId === branch.id;
+  const canWrite = user.role === "ADMIN" || user.branchId === branch.id;
 
   const header = (
     <CalendarHeader
       branches={branches}
       activeBranchId={branch.id}
       dateKey={dateKey}
-      realRole={user.role}
-      effectiveRole={effectiveRole}
       canWrite={canWrite}
     />
   );
 
   if (view === 0) {
-    const [schedule, catalog, packages] = await Promise.all([
+    const [schedule, catalog] = await Promise.all([
       getDaySchedule(branch.id, dateKey),
-      getServiceCatalog(),
-      getPackages(),
+      getServiceCatalog(branch.id),
     ]);
 
     return (
@@ -83,7 +77,6 @@ export default async function CalendarPage(props: PageProps<"/calendar">) {
           appointments={schedule.appointments}
           closure={schedule.closure}
           catalog={catalog}
-          packages={packages}
           canWrite={canWrite}
         />
       </main>

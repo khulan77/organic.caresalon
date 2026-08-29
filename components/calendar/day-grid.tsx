@@ -12,16 +12,19 @@ import type {
   BranchSummary,
   DayAppointment,
   DayStaff,
-  PackageList,
   ServiceCatalog,
 } from "@/lib/queries";
 import { formatMinutes, toDateKey, toLocalMinutes } from "@/lib/time";
 import { formatPrice } from "@/lib/labels";
+import { buildBookingText } from "@/lib/booking-text";
+import { CopyButton } from "@/components/ui/copy-button";
 import { PAYMENT_STATE_LABELS, summarize } from "@/lib/payments";
 import { AppointmentDialog, type DialogState } from "./appointment-dialog";
 
 /** Нэг минут хэдэн пиксел эзлэх — 1 цаг = 114px */
 const PX_PER_MIN = 1.9;
+/** Хуанлийн шугам ба цаг сонголтын алхам — 30 минут. */
+export const SLOT_STEP = 30;
 /** Багана ба цагийн баганын өргөн — гар утсанд нарийсна. */
 const COL = "min-w-[168px] flex-1 md:min-w-[210px]";
 const GUTTER = "w-14 shrink-0 md:w-[76px]";
@@ -38,7 +41,6 @@ type Props = {
     reason: string | null;
   } | null;
   catalog: ServiceCatalog;
-  packages: PackageList;
   /** Энэ салбарт захиалга бүртгэх эрхтэй эсэх (ресепшн зөвхөн харьяа салбартаа) */
   canWrite: boolean;
 };
@@ -85,7 +87,6 @@ export function DayGrid({
   appointments,
   closure,
   catalog,
-  packages,
   canWrite,
 }: Props) {
   const router = useRouter();
@@ -114,9 +115,13 @@ export function DayGrid({
 
   const gridHeight = (rangeEnd - rangeStart) * PX_PER_MIN;
 
-  const hourMarks = useMemo(() => {
+  /**
+   * Цагийн шугам 30 минут тутам. Бүтэн цаг нь тод, хагас цаг нь бүдэг —
+   * ресепшн 30 минутын нүд рүү нүдээр шууд ононо.
+   */
+  const timeMarks = useMemo(() => {
     const marks: number[] = [];
-    for (let m = rangeStart; m <= rangeEnd; m += 60) marks.push(m);
+    for (let m = rangeStart; m <= rangeEnd; m += SLOT_STEP) marks.push(m);
     return marks;
   }, [rangeStart, rangeEnd]);
 
@@ -229,6 +234,31 @@ export function DayGrid({
     clearNewParam();
   }
 
+  /**
+   * Захиалгын баталгаажуулалтын текст — хамтарсан захиалгын бүх мөрийг нэгтгэнэ.
+   * Хуанли дээрх аль ч мөрөөс хуулахад НЭГ бүтэн мессеж гарна.
+   */
+  function copyTextFor(appointment: DayAppointment): string {
+    const group = appointment.groupId
+      ? appointments.filter((a) => a.groupId === appointment.groupId)
+      : [appointment];
+    const primary = group.find((a) => a.isPrimary) ?? appointment;
+
+    return buildBookingText({
+      clientName: appointment.client.name,
+      branchName: branch.name,
+      startAt: appointment.startAt,
+      endAt: appointment.endAt,
+      lines: group.map((row) => ({
+        staffName: staff.find((m) => m.id === row.staffId)?.name ?? "—",
+        items: row.items,
+      })),
+      extraTotal: primary.extraTotal,
+      totalPrice: group.reduce((sum, row) => sum + row.totalPrice, 0),
+      paid: primary.payments.reduce((sum, payment) => sum + payment.amount, 0),
+    });
+  }
+
   if (visibleStaff.length === 0) {
     const noStaffAtAll = staff.length === 0;
     return (
@@ -252,7 +282,7 @@ export function DayGrid({
   return (
     <>
       {closure?.isClosed ? (
-        <div className="no-print border-b border-amber-200 bg-amber-50 px-6 py-2 text-sm text-amber-900">
+        <div className="no-print border-b border-warn-200 bg-warn-50 px-6 py-2 text-sm text-warn-700">
           Тухайн өдөр салбар хаалттай
           {closure.reason ? ` — ${closure.reason}` : ""}.
         </div>
@@ -278,19 +308,23 @@ export function DayGrid({
               return (
                 <div
                   key={member.id}
-                  className={`${COL} border-l border-sand-200 px-3 py-4 text-center md:py-5`}
+                  className={`${COL} border-l border-sand-200 px-3 py-3 text-center md:py-4`}
                 >
                   <span
                     aria-hidden
-                    className="mx-auto flex size-11 items-center justify-center rounded-full text-sm font-medium tracking-wide text-white"
+                    className="mx-auto flex size-10 items-center justify-center rounded-full text-[13px] font-semibold tracking-wide text-white ring-2 ring-white md:size-11 md:text-sm"
                     style={{ backgroundColor: member.color }}
                   >
                     {initialsOf(member.name)}
                   </span>
-                  <p className="mt-2.5 truncate text-[15px] font-medium text-sand-900">
+                  <p className="mt-2 truncate text-sm font-medium text-sand-900 md:text-[15px]">
                     {member.name}
                   </p>
-                  <p className="mt-0.5 truncate text-xs text-sand-500">
+                  <p
+                    className={`mt-0.5 truncate text-xs ${
+                      dayOff ? "text-sand-400" : "text-sand-500"
+                    }`}
+                  >
                     {dayOff ? "Амралттай" : `${count} захиалга`}
                   </p>
                 </div>
@@ -305,15 +339,22 @@ export function DayGrid({
               className={`relative ${GUTTER}`}
               style={{ height: gridHeight }}
             >
-              {hourMarks.map((minute) => (
-                <div
-                  key={minute}
-                  className="absolute right-2 -translate-y-1/2 font-mono text-[11px] text-sand-400 md:right-4 md:text-xs"
-                  style={{ top: (minute - rangeStart) * PX_PER_MIN }}
-                >
-                  {formatMinutes(minute)}
-                </div>
-              ))}
+              {timeMarks.map((minute) => {
+                const onTheHour = minute % 60 === 0;
+                return (
+                  <div
+                    key={minute}
+                    className={`absolute right-2 -translate-y-1/2 font-mono tabular-nums md:right-4 ${
+                      onTheHour
+                        ? "text-[11px] text-sand-500 md:text-xs"
+                        : "text-[10px] text-sand-300 md:text-[11px]"
+                    }`}
+                    style={{ top: (minute - rangeStart) * PX_PER_MIN }}
+                  >
+                    {formatMinutes(minute)}
+                  </div>
+                );
+              })}
             </div>
 
             {visibleStaff.map((member) => (
@@ -324,9 +365,9 @@ export function DayGrid({
                 rangeStart={rangeStart}
                 rangeEnd={rangeEnd}
                 gridHeight={gridHeight}
-                slotMin={branch.slotMin}
-                hourMarks={hourMarks}
+                timeMarks={timeMarks}
                 canWrite={canWrite}
+                copyTextFor={copyTextFor}
                 onCreate={(startMin) => {
                   clearNewParam();
                   setDialog({
@@ -371,8 +412,8 @@ export function DayGrid({
           }
           state={activeDialog}
           staff={visibleStaff}
+          branchName={branch.name}
           catalog={catalog}
-          packages={packages}
           canWrite={canWrite}
           onClose={closeDialog}
         />
@@ -387,9 +428,9 @@ function StaffColumn({
   rangeStart,
   rangeEnd,
   gridHeight,
-  slotMin,
-  hourMarks,
+  timeMarks,
   canWrite,
+  copyTextFor,
   onCreate,
   onOpen,
 }: {
@@ -398,9 +439,9 @@ function StaffColumn({
   rangeStart: number;
   rangeEnd: number;
   gridHeight: number;
-  slotMin: number;
-  hourMarks: number[];
+  timeMarks: number[];
   canWrite: boolean;
+  copyTextFor: (appointment: DayAppointment) => string;
   onCreate: (startMin: number) => void;
   onOpen: (appointment: DayAppointment) => void;
 }) {
@@ -414,8 +455,9 @@ function StaffColumn({
     if (locked) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const raw = rangeStart + (event.clientY - rect.top) / PX_PER_MIN;
-    const snapped = Math.floor(raw / slotMin) * slotMin;
-    onCreate(Math.max(rangeStart, Math.min(snapped, rangeEnd - slotMin)));
+    // Дарсан цагийг 30 минутын нүд рүү бөөрөнхийлнө
+    const snapped = Math.floor(raw / SLOT_STEP) * SLOT_STEP;
+    onCreate(Math.max(rangeStart, Math.min(snapped, rangeEnd - SLOT_STEP)));
   }
 
   return (
@@ -423,10 +465,12 @@ function StaffColumn({
       className={`relative ${COL} border-l border-sand-200`}
       style={{ height: gridHeight }}
     >
-      {hourMarks.map((minute) => (
+      {timeMarks.map((minute) => (
         <div
           key={minute}
-          className="pointer-events-none absolute inset-x-0 border-t border-sand-200/70"
+          className={`pointer-events-none absolute inset-x-0 border-t ${
+            minute % 60 === 0 ? "border-sand-200" : "border-sand-100"
+          }`}
           style={{ top: (minute - rangeStart) * PX_PER_MIN }}
         />
       ))}
@@ -468,6 +512,7 @@ function StaffColumn({
           rangeStart={rangeStart}
           column={column}
           columns={columns}
+          copyTextFor={copyTextFor}
           onOpen={onOpen}
         />
       ))}
@@ -501,12 +546,14 @@ function AppointmentBlock({
   rangeStart,
   column,
   columns,
+  copyTextFor,
   onOpen,
 }: {
   appointment: DayAppointment;
   rangeStart: number;
   column: number;
   columns: number;
+  copyTextFor: (appointment: DayAppointment) => string;
   onOpen: (appointment: DayAppointment) => void;
 }) {
   const startMin = toLocalMinutes(appointment.startAt);
@@ -541,12 +588,21 @@ function AppointmentBlock({
             }
           : null;
 
+  // Хуулах товчийг дотор нь байрлуулах тул блок нь <button> БИШ — HTML-д
+  // товч дотор товч байж болохгүй. Гар (keyboard)-ын үйлдлийг гараар өгнө.
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={() => onOpen(appointment)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen(appointment);
+        }
+      }}
       title={`${appointment.client.name} · ${formatMinutes(startMin)}–${formatMinutes(endMin)} · ${appointment.items.map((i) => i.name).join(", ")}${grouped ? " · хамтарсан захиалга" : ""}${moneyMark ? ` · ${moneyMark.title}` : ""}`}
-      className={`absolute overflow-hidden rounded-lg pl-3.5 pr-2.5 text-left transition hover:z-10 hover:shadow-md focus:z-10 focus:outline-none focus:ring-2 focus:ring-brand-500/40 ${
+      className={`group/appt absolute cursor-pointer overflow-hidden rounded-lg pl-3.5 pr-2.5 text-left shadow-[0_1px_2px_rgba(34,32,29,0.06)] ring-1 ring-inset ring-sand-900/5 transition duration-150 hover:z-10 hover:shadow-md focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/50 ${
         compact ? "py-1" : "py-2"
       } ${noShow ? "hatched" : ""}`}
       style={{
@@ -561,7 +617,7 @@ function AppointmentBlock({
       {/* Зүүн талын өнгөт зурвас */}
       <span
         aria-hidden
-        className="absolute inset-y-0 left-0 w-[4px]"
+        className="absolute inset-y-0 left-0 w-[3.5px] rounded-l-lg"
         style={{ backgroundColor: color, opacity: cancelled ? 0.5 : 1 }}
       />
 
@@ -587,8 +643,11 @@ function AppointmentBlock({
         </span>
       ) : null}
 
-      <p className="truncate font-mono text-[11px]" style={{ color }}>
-        {formatMinutes(startMin)} – {formatMinutes(endMin)}
+      <p
+        className="truncate font-mono text-[10.5px] tabular-nums opacity-90"
+        style={{ color }}
+      >
+        {formatMinutes(startMin)}–{formatMinutes(endMin)}
       </p>
       <p
         className={`truncate text-sm font-semibold text-sand-900 ${
@@ -611,7 +670,26 @@ function AppointmentBlock({
           {appointment.items.map((item) => item.name).join(", ")}
         </p>
       ) : null}
-    </button>
+
+      {/*
+        Захиалгын мэдээллийг хуулах — үйлчлүүлэгч рүү баталгаажуулалт илгээхэд.
+        Хулганаар дээгүүр очиход эсвэл гараар товч дээр очиход л гарч ирнэ,
+        ингэснээр хуанли цэвэрхэн харагдана. Хүрэлцэх дэлгэцэд үргэлж харагдана.
+        Богино (22px) блокт багтахгүй тул зөвхөн өндөр блокт гаргана —
+        тэнд захиалгын цонхноос хуулж болно.
+      */}
+      {!compact ? (
+        <span className="absolute bottom-1 right-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/appt:opacity-100 max-md:opacity-100">
+          <CopyButton
+            compact
+            label=""
+            title="Захиалгын мэдээллийг хуулах"
+            getText={() => copyTextFor(appointment)}
+            className="flex size-6 items-center justify-center rounded-md border border-sand-300 bg-white/95 text-sand-600 shadow-sm transition hover:bg-sand-100 hover:text-sand-900"
+          />
+        </span>
+      ) : null}
+    </div>
   );
 }
 

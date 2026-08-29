@@ -50,8 +50,8 @@ model Branch {
   openMin   Int      @default(600)
   /// Ажлын дуусах цаг — локал минут (1140 = 19:00)
   closeMin  Int      @default(1140)
-  /// Хуанлийн нүдний алхам, минутаар (15 эсвэл 30)
-  slotMin   Int      @default(15)
+  /// Хуанлийн нүдний алхам, минутаар
+  slotMin   Int      @default(30)
   isActive  Boolean  @default(true)
   sortOrder Int      @default(0)
   createdAt DateTime @default(now())
@@ -61,6 +61,7 @@ model Branch {
   users        User[]
   appointments Appointment[]
   closures     BranchClosure[]
+  services     Service[]
 
   @@map("branches")
 }
@@ -214,6 +215,8 @@ model ServiceCategory {
 model Service {
   id          String    @id @default(cuid())
   categoryId  String
+  /// Аль салбарын үйлчилгээ. Хоосон бол БҮХ салбарт нийтлэг.
+  branchId    String?
   name        String
   /// Үргэлжлэх хугацаа, минутаар
   durationMin Int
@@ -229,46 +232,15 @@ model Service {
   sortOrder   Int       @default(0)
 
   category ServiceCategory      @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  branch   Branch?              @relation(fields: [branchId], references: [id], onDelete: Cascade)
   items    AppointmentService[]
-  packages PackageService[]
 
-  @@unique([categoryId, name])
+  // Нэг салбарын нэг ангилалд ижил нэр давхардахгүй.
+  // (branchId = null нь бүх салбарт нийтлэг үйлчилгээ.)
+  @@unique([categoryId, branchId, name])
   @@index([categoryId])
+  @@index([branchId])
   @@map("services")
-}
-
-/// Багц — хэд хэдэн үйлчилгээг нэг тогтмол үнээр
-model Package {
-  id          String   @id @default(cuid())
-  name        String   @unique
-  description String?
-  /// Багцын нийт үнэ. Дотоод үйлчилгээнүүдийн нийлбэрээс хямд байх нь ердийн.
-  price       Int
-  color       String?
-  isActive    Boolean  @default(true)
-  sortOrder   Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  items        PackageService[]
-  appointments Appointment[]
-
-  @@map("packages")
-}
-
-/// Багцад орсон үйлчилгээ
-model PackageService {
-  id        String @id @default(cuid())
-  packageId String
-  serviceId String
-  sortOrder Int    @default(0)
-
-  package Package @relation(fields: [packageId], references: [id], onDelete: Cascade)
-  service Service @relation(fields: [serviceId], references: [id], onDelete: Restrict)
-
-  @@unique([packageId, serviceId])
-  @@index([packageId])
-  @@map("package_services")
 }
 
 // ─────────────────────────── Үйлчлүүлэгч ───────────────────────────────
@@ -313,15 +285,14 @@ model Appointment {
   /// нэг үйлчлүүлэгч НЭГ нэхэмжлэх авна. Хөнгөлөлтийг мөр бүрийн үйлчилгээний
   /// дүнгээр хувь тэнцүүлэн хуваарилдаг тул ажилтны орлого зөв гарна.
   isPrimary     Boolean           @default(true)
-  /// Хэрэглэсэн багц (сонгосон бол)
-  packageId     String?
-  /// Үйлчилгээнүүдийн нийлбэр — хөнгөлөлтийн ӨМНӨХ дүн
+  /// Үйлчилгээнүүдийн нийлбэр
   subtotal      Int               @default(0)
   /// Нэмэлт төлбөрүүдийн нийлбэр (charges). Тооцоог хурдан гаргахад хадгална.
   extraTotal    Int               @default(0)
-  /// Хөнгөлөлтийн дүн, төгрөгөөр (багцын хямдрал + гараар өгсөн хөнгөлөлт)
+  /// ХУУЧИН талбар — багц ба гараар өгдөг хөнгөлөлт байхгүй болсон.
+  /// Түүхэн захиалгын дүн зөв харагдахын тулд үлдээв, шинэ захиалгад үргэлж 0.
   discount      Int               @default(0)
-  /// Хөнгөлөлтийн шалтгаан
+  /// ХУУЧИН талбар — дээрхтэй адил зөвхөн түүхэнд
   discountNote  String?
   /// Эцсийн төлөх дүн = subtotal + extraTotal − discount
   totalPrice    Int               @default(0)
@@ -338,7 +309,6 @@ model Appointment {
   branch      Branch               @relation(fields: [branchId], references: [id], onDelete: Restrict)
   staff       Staff                @relation(fields: [staffId], references: [id], onDelete: Restrict)
   client      Client               @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  pkg         Package?             @relation(fields: [packageId], references: [id], onDelete: SetNull)
   createdBy   User?                @relation("AppointmentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   cancelledBy User?                @relation("AppointmentCancelledBy", fields: [cancelledById], references: [id], onDelete: SetNull)
   items       AppointmentService[]

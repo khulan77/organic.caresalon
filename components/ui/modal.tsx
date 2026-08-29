@@ -36,7 +36,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={`relative flex max-h-[92vh] w-full flex-col rounded-t-2xl bg-white shadow-xl sm:rounded-2xl ${
+        className={`relative flex max-h-[92dvh] w-full flex-col rounded-t-2xl bg-white shadow-xl pb-[env(safe-area-inset-bottom)] sm:max-h-[92vh] sm:rounded-2xl sm:pb-0 ${
           wide ? "max-w-2xl" : "max-w-lg"
         }`}
       >

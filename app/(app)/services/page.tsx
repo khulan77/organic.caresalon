@@ -1,16 +1,17 @@
 import { requireUser } from "@/lib/auth";
-import { getEffectiveRole } from "@/lib/preview";
-import { getServiceAdmin } from "@/lib/queries";
+import { getBranches, getServiceAdmin } from "@/lib/queries";
 import { ServicesManager } from "@/components/services/services-manager";
 
 export const metadata = { title: "Үйлчилгээ" };
 
 export default async function ServicesPage() {
   const user = await requireUser();
-  const effectiveRole = await getEffectiveRole(user);
-  const canEdit = effectiveRole === "ADMIN";
+  const canEdit = user.role === "ADMIN";
 
-  const categories = await getServiceAdmin();
+  const [categories, branches] = await Promise.all([
+    getServiceAdmin(),
+    getBranches(),
+  ]);
 
   // Ресепшн идэвхгүй үйлчилгээг харах шаардлагагүй
   const visible = canEdit
@@ -20,5 +21,11 @@ export default async function ServicesPage() {
         services: category.services.filter((service) => service.isActive),
       }));
 
-  return <ServicesManager categories={visible} canEdit={canEdit} />;
+  return (
+    <ServicesManager
+      categories={visible}
+      branches={branches.map((branch) => ({ id: branch.id, name: branch.name }))}
+      canEdit={canEdit}
+    />
+  );
 }

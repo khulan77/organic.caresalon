@@ -27,7 +27,7 @@ export default async function ChangePasswordPage() {
         </div>
 
         {forced ? (
-          <p className="mb-4 rounded-xl bg-[#f7efe2] px-4 py-3 text-sm text-[#7a5d33]">
+          <p className="mb-4 rounded-xl bg-warn-50 px-4 py-3 text-sm text-warn-700">
             Танд түр нууц үг олгосон байна. Үргэлжлүүлэхийн тулд зөвхөн өөрийн
             мэдэх шинэ нууц үг тохируулна уу.
           </p>

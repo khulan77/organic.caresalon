@@ -2,7 +2,7 @@
 
 import { randomInt } from "node:crypto";
 import { refresh } from "next/cache";
-import { getActionUser } from "@/lib/auth";
+import { requireAdminAction } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { hashPassword } from "@/lib/password";
 import { fail } from "@/lib/action-result";
@@ -15,14 +15,8 @@ import { fail } from "@/lib/action-result";
  * эзэлдэггүй. Тиймээс хоёуланг нь тусад нь удирдана.
  */
 
-/** Хэрэглэгч удирдах эрхийг зөвхөн админд өгнө. */
-async function requireAdminAction() {
-  const user = await getActionUser();
-  if (user.role !== "ADMIN") {
-    throw new Error("Нэвтрэх эрх өөрчлөх боломж зөвхөн админд байна.");
-  }
-  return user;
-}
+/** Админаас өөр хүн энэ үйлдлийг оролдвол харагдах мессеж. */
+const ADMIN_ONLY = "Нэвтрэх эрх өөрчлөх боломж зөвхөн админд байна.";
 
 /** Түр нууц үг үүсгэсэн үед буцаах хариу — админ уншиж хэлнэ. */
 export type UserActionResult =
@@ -60,7 +54,9 @@ export async function saveUser(
   _prev: UserActionResult | null,
   formData: FormData,
 ): Promise<UserActionResult> {
-  const actor = await requireAdminAction();
+  const guard = await requireAdminAction(ADMIN_ONLY);
+  if (!guard.ok) return guard;
+  const actor = guard.user;
 
   const id = String(formData.get("id") ?? "") || null;
   const name = String(formData.get("name") ?? "").trim();
@@ -149,7 +145,8 @@ export async function saveUser(
 export async function resetUserPassword(
   id: string,
 ): Promise<UserActionResult> {
-  await requireAdminAction();
+  const guard = await requireAdminAction(ADMIN_ONLY);
+  if (!guard.ok) return guard;
 
   const user = await prisma.user.findUnique({
     where: { id },
@@ -179,7 +176,9 @@ export async function toggleUser(
   id: string,
   isActive: boolean,
 ): Promise<UserActionResult> {
-  const actor = await requireAdminAction();
+  const guard = await requireAdminAction(ADMIN_ONLY);
+  if (!guard.ok) return guard;
+  const actor = guard.user;
 
   if (id === actor.id && !isActive) {
     return fail("Өөрийгөө идэвхгүй болгох боломжгүй.");
@@ -210,7 +209,9 @@ export async function toggleUser(
 // ──────────────────────────────── Устгах ──────────────────────────────
 
 export async function deleteUser(id: string): Promise<UserActionResult> {
-  const actor = await requireAdminAction();
+  const guard = await requireAdminAction(ADMIN_ONLY);
+  if (!guard.ok) return guard;
+  const actor = guard.user;
 
   if (id === actor.id) {
     return fail("Өөрийгөө устгах боломжгүй.");

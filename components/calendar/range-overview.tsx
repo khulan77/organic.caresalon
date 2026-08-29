@@ -90,7 +90,7 @@ export function RangeOverview({
               <div className="flex items-baseline justify-between">
                 <span className="text-lg font-semibold text-sand-900">{day}</span>
                 <span
-                  className={`text-xs ${isSunday ? "text-[#9a5555]" : "text-sand-500"}`}
+                  className={`text-xs ${isSunday ? "text-danger-600" : "text-sand-500"}`}
                 >
                   {WEEKDAYS_SHORT[weekday]}
                 </span>

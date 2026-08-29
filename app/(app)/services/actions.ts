@@ -1,19 +1,13 @@
 "use server";
 
 import { refresh } from "next/cache";
-import { getActionUser } from "@/lib/auth";
+import { requireAdminAction } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { fail, readAmount, type ActionResult } from "@/lib/action-result";
 import { isDateKey, localToUtc } from "@/lib/time";
 
-/** Үйлчилгээ, ангилал өөрчлөх эрхийг зөвхөн админд өгнө. */
-async function requireAdminAction() {
-  const user = await getActionUser();
-  if (user.role !== "ADMIN") {
-    throw new Error("Үйлчилгээ өөрчлөх эрх зөвхөн админд байна.");
-  }
-  return user;
-}
+/** Админаас өөр хүн энэ үйлдлийг оролдвол харагдах мессеж. */
+const ADMIN_ONLY = "Үйлчилгээ өөрчлөх эрх зөвхөн админд байна.";
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
 
@@ -23,7 +17,8 @@ export async function saveCategory(
   _prev: ActionResult | null,
   formData: FormData,
 ): Promise<ActionResult> {
-  await requireAdminAction();
+  const guard = await requireAdminAction(ADMIN_ONLY);
+  if (!guard.ok) return guard;
 
   const id = String(formData.get("id") ?? "") || null;
   const name = String(formData.get("name") ?? "").trim();
@@ -48,7 +43,8 @@ export async function saveCategory(
 }
 
 export async function deleteCategory(id: string): Promise<ActionResult> {
-  await requireAdminAction();
+  const guard = await requireAdminAction(ADMIN_ONLY);
+  if (!guard.ok) return guard;
 
   const count = await prisma.service.count({ where: { categoryId: id } });
   if (count > 0) {
@@ -68,10 +64,13 @@ export async function saveService(
   _prev: ActionResult | null,
   formData: FormData,
 ): Promise<ActionResult> {
-  await requireAdminAction();
+  const guard = await requireAdminAction(ADMIN_ONLY);
+  if (!guard.ok) return guard;
 
   const id = String(formData.get("id") ?? "") || null;
   const categoryId = String(formData.get("categoryId") ?? "");
+  // Хоосон бол бүх салбарт нийтлэг үйлчилгээ
+  const branchId = String(formData.get("branchId") ?? "").trim() || null;
   const name = String(formData.get("name") ?? "").trim();
   const durationMin = readAmount(formData.get("durationMin"));
   const price = readAmount(formData.get("price"));
@@ -96,6 +95,7 @@ export async function saveService(
 
   const data = {
     categoryId,
+    branchId,
     name,
     durationMin: durationMin as number,
     price: price as number,
@@ -110,7 +110,9 @@ export async function saveService(
     else await prisma.service.create({ data });
   } catch (error) {
     if (isUniqueError(error))
-      return fail(`Энэ ангилалд «${name}» нэртэй үйлчилгээ аль хэдийн байна.`);
+      return fail(
+        `Энэ ангилалд «${name}» нэртэй үйлчилгээ тухайн салбарт аль хэдийн байна.`,
+      );
     throw error;
   }
 
@@ -123,33 +125,30 @@ export async function toggleService(
   id: string,
   isActive: boolean,
 ): Promise<ActionResult> {
-  await requireAdminAction();
+  const guard = await requireAdminAction(ADMIN_ONLY);
+  if (!guard.ok) return guard;
   await prisma.service.update({ where: { id }, data: { isActive } });
   refresh();
   return { ok: true };
 }
 
 /**
- * Бүрмөсөн устгах — зөвхөн ямар ч захиалга, багцад ороогүй үйлчилгээг.
+ * Бүрмөсөн устгах — зөвхөн ямар ч захиалгад ороогүй үйлчилгээг.
  * Ашиглагдсан бол түүх алдагдахгүйн тулд идэвхгүй болгохыг зөвлөнө.
  */
 export async function deleteService(id: string): Promise<ActionResult> {
-  await requireAdminAction();
+  const guard = await requireAdminAction(ADMIN_ONLY);
+  if (!guard.ok) return guard;
 
   const service = await prisma.service.findUnique({
     where: { id },
-    select: { name: true, _count: { select: { items: true, packages: true } } },
+    select: { name: true, _count: { select: { items: true } } },
   });
   if (!service) return fail("Үйлчилгээ олдсонгүй.");
 
   if (service._count.items > 0) {
     return fail(
       `«${service.name}» нь ${service._count.items} захиалгад бүртгэгдсэн тул устгах боломжгүй. Идэвхгүй болгоно уу.`,
-    );
-  }
-  if (service._count.packages > 0) {
-    return fail(
-      `«${service.name}» нь багцад орсон байна. Эхлээд багцаас нь хасна уу.`,
     );
   }
 

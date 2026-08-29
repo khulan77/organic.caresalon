@@ -25,6 +25,10 @@ import {
 
 type Category = ServiceAdmin[number];
 type Service = Category["services"][number];
+type BranchOption = { id: string; name: string };
+
+/** Салбарын шүүлтүүрийн утга: null = бүгд, "" = зөвхөн нийтлэг. */
+type BranchFilter = string | null;
 
 const PRESET_COLORS = [
   "#c0798c",
@@ -45,15 +49,33 @@ type Editing =
   | null;
 
 export function ServicesManager({
-  categories,
+  categories: allCategories,
+  branches,
   canEdit,
 }: {
   categories: ServiceAdmin;
+  branches: BranchOption[];
   canEdit: boolean;
 }) {
   const [editing, setEditing] = useState<Editing>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [branchFilter, setBranchFilter] = useState<BranchFilter>(null);
+
+  /**
+   * Салбараар шүүсэн жагсаалт. Нийтлэг үйлчилгээ (branchId = null) нь
+   * салбар сонгосон үед ч харагдана — тэр салбарт бодитоор захиалагдана.
+   */
+  const categories =
+    branchFilter === null
+      ? allCategories
+      : allCategories.map((category) => ({
+          ...category,
+          services: category.services.filter(
+            (service) =>
+              service.branchId === null || service.branchId === branchFilter,
+          ),
+        }));
 
   const totalServices = categories.reduce((sum, c) => sum + c.services.length, 0);
   const onSale = categories
@@ -98,6 +120,29 @@ export function ServicesManager({
           ) : null
         }
       />
+
+      {branches.length > 1 ? (
+        <div className="scrollbar-slim flex shrink-0 items-center gap-2 overflow-x-auto border-b border-sand-200 bg-sand-50 px-4 py-2.5 md:px-6">
+          <span className="shrink-0 text-xs text-sand-500">Салбар</span>
+          <div className="flex shrink-0 items-center gap-1 rounded-full bg-sand-200/70 p-1">
+            <FilterPill
+              active={branchFilter === null}
+              onClick={() => setBranchFilter(null)}
+            >
+              Бүгд
+            </FilterPill>
+            {branches.map((branch) => (
+              <FilterPill
+                key={branch.id}
+                active={branchFilter === branch.id}
+                onClick={() => setBranchFilter(branch.id)}
+              >
+                {branch.name}
+              </FilterPill>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="min-h-0 flex-1 overflow-auto scrollbar-slim p-4 md:p-6">
         {error ? (
@@ -150,7 +195,7 @@ export function ServicesManager({
                           type="button"
                           disabled={isPending}
                           onClick={() => run(() => deleteCategory(category.id))}
-                          className="text-[#9a5555] hover:underline"
+                          className="text-danger-600 hover:underline"
                         >
                           Устгах
                         </button>
@@ -184,6 +229,7 @@ export function ServicesManager({
                             key={service.id}
                             service={service}
                             categoryColor={category.color}
+                            showBranch={branches.length > 1}
                             canEdit={canEdit}
                             isPending={isPending}
                             onEdit={() =>
@@ -222,9 +268,11 @@ export function ServicesManager({
 
       {editing?.kind === "service" ? (
         <ServiceModal
-          categories={categories}
+          categories={allCategories}
+          branches={branches}
           categoryId={editing.categoryId}
           service={editing.service}
+          defaultBranchId={branchFilter}
           onClose={() => setEditing(null)}
         />
       ) : null}
@@ -232,9 +280,36 @@ export function ServicesManager({
   );
 }
 
+/** Салбарын шүүлтүүрийн товч. */
+function FilterPill({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm transition ${
+        active
+          ? "bg-white font-medium text-sand-900 shadow-sm"
+          : "text-sand-500 hover:text-sand-800"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
 function ServiceRow({
   service,
   categoryColor,
+  showBranch,
   canEdit,
   isPending,
   onEdit,
@@ -243,6 +318,7 @@ function ServiceRow({
 }: {
   service: Service;
   categoryColor: string;
+  showBranch: boolean;
   canEdit: boolean;
   isPending: boolean;
   onEdit: () => void;
@@ -251,7 +327,7 @@ function ServiceRow({
 }) {
   const sale = isSaleActive(service);
   const percent = salePercent(service);
-  const used = service._count.items > 0 || service._count.packages > 0;
+  const used = service._count.items > 0;
 
   return (
     <tr className={service.isActive ? "hover:bg-sand-50" : "bg-sand-50/60"}>
@@ -272,6 +348,17 @@ function ServiceRow({
               идэвхгүй
             </span>
           ) : null}
+          {showBranch ? (
+            <span
+              className={`shrink-0 rounded px-1.5 py-0.5 text-xs ${
+                service.branch
+                  ? "bg-brand-50 text-brand-700"
+                  : "bg-sand-100 text-sand-500"
+              }`}
+            >
+              {service.branch?.name ?? "бүх салбар"}
+            </span>
+          ) : null}
         </span>
         {/* Гар утсанд «Хугацаа» багана нуугддаг тул энд харуулна */}
         <span className="ml-4 block text-xs text-sand-500 sm:hidden">
@@ -287,10 +374,10 @@ function ServiceRow({
             <span className="text-sand-400 line-through">
               {formatPrice(service.price)}
             </span>
-            <span className="font-semibold tabular-nums text-[#986438]">
+            <span className="font-semibold tabular-nums text-warn-600">
               {formatPrice(service.salePrice as number)}
             </span>
-            <span className="rounded bg-[#f6ead9] px-1.5 py-0.5 text-xs font-medium text-[#986438]">
+            <span className="rounded bg-warn-50 px-1.5 py-0.5 text-xs font-medium text-warn-600">
               −{percent}%
             </span>
           </span>
@@ -328,7 +415,7 @@ function ServiceRow({
                 type="button"
                 disabled={isPending}
                 onClick={onDelete}
-                className="text-[#9a5555] hover:underline"
+                className="text-danger-600 hover:underline"
               >
                 Устгах
               </button>
@@ -402,13 +489,18 @@ function CategoryModal({
 
 function ServiceModal({
   categories,
+  branches,
   categoryId,
   service,
+  defaultBranchId,
   onClose,
 }: {
   categories: ServiceAdmin;
+  branches: BranchOption[];
   categoryId: string;
   service: Service | null;
+  /** Шүүлтүүрт салбар сонгосон бол шинэ үйлчилгээ түүнд өгөгдөнө */
+  defaultBranchId: BranchFilter;
   onClose: () => void;
 }) {
   const [result, formAction, isPending] = useActionState<
@@ -472,6 +564,24 @@ function ServiceModal({
             />
           </Field>
 
+          <Field
+            label="Салбар"
+            hint="«Бүх салбар» бол хаана ч захиалагдана"
+          >
+            <select
+              name="branchId"
+              defaultValue={service?.branchId ?? defaultBranchId ?? ""}
+              className={inputClass}
+            >
+              <option value="">Бүх салбар</option>
+              {branches.map((branch) => (
+                <option key={branch.id} value={branch.id}>
+                  {branch.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+
           <Field label="Хугацаа (минут)" hint="Хуанли дээр эзлэх зай">
             <input
               name="durationMin"
@@ -504,7 +614,7 @@ function ServiceModal({
               type="checkbox"
               checked={hasSale}
               onChange={(event) => setHasSale(event.target.checked)}
-              className="size-4 accent-[#986438]"
+              className="size-4 accent-warn-600"
             />
             <span className="text-sm font-medium text-sand-800">
               Хямдралтай үнэ тавих

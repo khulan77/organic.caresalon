@@ -35,6 +35,24 @@ export async function getActionUser(): Promise<CurrentUser> {
 }
 
 /**
+ * Server Action дотор ашиглах админ шалгалт.
+ *
+ * Алдаа ШИДЭХГҮЙ — шидвэл React-ийн алдааны хил хязгаар ажиллаж бүхэл цонх
+ * унана. Оронд нь энгийн үр дүн буцааж, дуудсан газар нь хэрэглэгчид
+ * ойлгомжтой мессеж харуулна.
+ */
+export async function requireAdminAction(
+  message: string,
+): Promise<
+  { ok: true; user: CurrentUser } | { ok: false; issues: string[] }
+> {
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, issues: ["Нэвтрэх шаардлагатай."] };
+  if (user.role !== "ADMIN") return { ok: false, issues: [message] };
+  return { ok: true, user };
+}
+
+/**
  * Тухайн салбарт БИЧИХ (захиалга нэмэх, засах, төлөв солих) эрхтэй эсэх.
  *
  * Ресепшн бүх салбарын хуанли ба сул цагийг ХАРНА — утсаар лавлахад хэрэгтэй.

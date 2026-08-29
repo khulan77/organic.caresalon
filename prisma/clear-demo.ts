@@ -2,7 +2,7 @@
  * Жишээ (seed) өгөгдлийг цэвэрлэнэ.
  *
  * ҮЛДЭЭХ: салбарууд, админ эрхтэй хэрэглэгчид.
- * УСТГАХ: захиалга, үйлчлүүлэгч, ажилтан, үйлчилгээ, ангилал, багц,
+ * УСТГАХ: захиалга, үйлчлүүлэгч, ажилтан, үйлчилгээ, ангилал,
  *         админаас бусад бүх нэвтрэх эрх.
  *
  * Салбарыг үлдээх шалтгаан: ажилтан заавал салбартай байх ёстой
@@ -38,10 +38,9 @@ async function main() {
   }
 
   // Дараалал нь гадаад түлхүүрийн хамаарлаар тодорхойлогдоно.
-  // appointment_services, package_services, staff_schedules, staff_time_offs,
-  // sessions нь эцэг мөрөө устгахад Cascade-аар өөрсдөө устана.
+  // appointment_services, staff_schedules, staff_time_offs, sessions нь
+  // эцэг мөрөө устгахад Cascade-аар өөрсдөө устана.
   const appointments = await prisma.appointment.deleteMany();
-  const packages = await prisma.package.deleteMany();
   const services = await prisma.service.deleteMany();
   const categories = await prisma.serviceCategory.deleteMany();
   const clients = await prisma.client.deleteMany();
@@ -53,7 +52,6 @@ async function main() {
 
   const rows: [string, number][] = [
     ["захиалга", appointments.count],
-    ["багц", packages.count],
     ["үйлчилгээ", services.count],
     ["ангилал", categories.count],
     ["үйлчлүүлэгч", clients.count],

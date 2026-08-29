@@ -5,17 +5,11 @@ import { startTransition, useOptimistic } from "react";
 import type { BranchSummary } from "@/lib/queries";
 import { formatDateNumeric } from "@/lib/labels";
 import { addDays, todayKey } from "@/lib/time";
-import { setPreviewRole } from "@/app/(app)/preview-actions";
-import type { Role } from "@/lib/generated/prisma/enums";
 
 type Props = {
   branches: BranchSummary[];
   activeBranchId: string;
   dateKey: string;
-  /** Хэрэглэгчийн БОДИТ эрх — зөвхөн админд урьдчилан харах товч гарна */
-  realRole: Role;
-  /** Одоо харуулж буй эрх (админ «Ресепшн» горимд орж болно) */
-  effectiveRole: Role;
   /** Идэвхтэй салбарт захиалга бүртгэх эрхтэй эсэх */
   canWrite: boolean;
 };
@@ -24,8 +18,6 @@ export function CalendarHeader({
   branches,
   activeBranchId,
   dateKey,
-  realRole,
-  effectiveRole,
   canWrite,
 }: Props) {
   const router = useRouter();
@@ -108,12 +100,6 @@ export function CalendarHeader({
 
         <div className="flex-1" />
 
-        {realRole === "ADMIN" ? (
-          <div className="hidden lg:block">
-            <RolePreview effectiveRole={effectiveRole} />
-          </div>
-        ) : null}
-
         <button
           type="button"
           onClick={() => navigate({}, { new: true })}
@@ -163,7 +149,7 @@ export function CalendarHeader({
         </div>
 
         {!canWrite ? (
-          <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-amber-50 px-3 py-1.5 text-xs text-amber-900 ring-1 ring-amber-200">
+          <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-warn-50 px-3 py-1.5 text-xs text-warn-700 ring-1 ring-warn-200">
             <span aria-hidden>👁</span>
             Зөвхөн харах — өөр салбарын хуанли
           </span>
@@ -189,42 +175,5 @@ function ArrowButton({
     >
       {direction === "prev" ? "‹" : "›"}
     </button>
-  );
-}
-
-/**
- * Админ UI-г «Ресепшн» эрхээр харах горим.
- * Зөвхөн ХАРАГДАХ БАЙДЛЫГ өөрчилнө — серверийн эрхийн шалгалтад нөлөөлөхгүй.
- */
-function RolePreview({ effectiveRole }: { effectiveRole: Role }) {
-  const options: { value: Role; label: string }[] = [
-    { value: "ADMIN", label: "Админ" },
-    { value: "RECEPTION", label: "Ресепшн" },
-  ];
-
-  return (
-    <div
-      className="flex items-center gap-2 rounded-full border border-dashed border-sand-300 py-1 pl-3 pr-1"
-      title="Зөвхөн харагдах байдлыг урьдчилан харна. Жинхэнэ эрх өөрчлөгдөхгүй."
-    >
-      <span className="text-xs text-sand-500">Эрх</span>
-      {options.map((option) => {
-        const active = effectiveRole === option.value;
-        return (
-          <button
-            key={option.value}
-            type="button"
-            onClick={() => startTransition(() => setPreviewRole(option.value))}
-            className={`rounded-full px-3 py-1.5 text-sm transition ${
-              active
-                ? "bg-brand-600 font-medium text-white"
-                : "text-sand-600 hover:text-sand-900"
-            }`}
-          >
-            {option.label}
-          </button>
-        );
-      })}
-    </div>
   );
 }

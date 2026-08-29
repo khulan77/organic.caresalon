@@ -281,7 +281,7 @@ function StaffCard({
                   disabled={isPending}
                   onClick={() => onRemoveTimeOff(off.id)}
                   aria-label="Чөлөө хасах"
-                  className="shrink-0 text-sand-400 transition hover:text-[#9a5555]"
+                  className="shrink-0 text-sand-400 transition hover:text-danger-600"
                 >
                   ✕
                 </button>
@@ -320,7 +320,7 @@ function StaffCard({
               type="button"
               disabled={isPending}
               onClick={onDelete}
-              className="ml-auto text-[#9a5555] hover:underline"
+              className="ml-auto text-danger-600 hover:underline"
             >
               Устгах
             </button>
