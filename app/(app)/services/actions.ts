@@ -78,6 +78,8 @@ export async function saveService(
   const salePrice = salePriceRaw ? readAmount(formData.get("salePrice")) : null;
   const saleEnds = String(formData.get("saleEndsAt") ?? "").trim();
   const color = String(formData.get("color") ?? "").trim();
+  // Тэмдэглэгээгүй хайрцаг FormData-д огт ирдэггүй — иймд байхгүй бол идэвхгүй
+  const isActive = formData.get("isActive") === "on";
 
   const issues: string[] = [];
   if (!categoryId) issues.push("Ангилал сонгоно уу.");
@@ -103,6 +105,7 @@ export async function saveService(
     // Хямдрал заасан өдрийн ажлын төгсгөлд дуусна (локал 23:59 → UTC)
     saleEndsAt: saleEnds && salePrice != null ? localToUtc(saleEnds, 24 * 60) : null,
     color: color || null,
+    isActive,
   };
 
   try {
@@ -116,18 +119,6 @@ export async function saveService(
     throw error;
   }
 
-  refresh();
-  return { ok: true };
-}
-
-/** Идэвхтэй / идэвхгүй болгох. Идэвхгүй үйлчилгээ шинэ захиалгад гарахгүй. */
-export async function toggleService(
-  id: string,
-  isActive: boolean,
-): Promise<ActionResult> {
-  const guard = await requireAdminAction(ADMIN_ONLY);
-  if (!guard.ok) return guard;
-  await prisma.service.update({ where: { id }, data: { isActive } });
   refresh();
   return { ok: true };
 }

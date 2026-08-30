@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/session";
 import { LoginForm } from "./login-form";
@@ -12,9 +13,14 @@ export default async function LoginPage() {
     <main className="flex min-h-screen items-center justify-center bg-shell px-4 py-12">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-5 flex size-14 items-center justify-center rounded-full bg-brand-700 font-serif text-lg text-brand-50">
-            OC
-          </div>
+          <Image
+            src="/logo.png"
+            alt="Organic Care"
+            width={160}
+            height={160}
+            priority
+            className="mx-auto mb-5 size-20 rounded-full bg-white shadow-sm"
+          />
           <p className="font-serif text-3xl tracking-tight text-sand-900">
             Organic Care
           </p>

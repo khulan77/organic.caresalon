@@ -43,6 +43,8 @@ type Props = {
   catalog: ServiceCatalog;
   /** Энэ салбарт захиалга бүртгэх эрхтэй эсэх (ресепшн зөвхөн харьяа салбартаа) */
   canWrite: boolean;
+  /** Админ бол сул цаг дээр шууд чөлөө нэмж чадна */
+  isAdmin: boolean;
 };
 
 /** Захиалгын өнгө — үйлчилгээнийх, эс бөгөөс ангиллынх. */
@@ -88,6 +90,7 @@ export function DayGrid({
   closure,
   catalog,
   canWrite,
+  isAdmin,
 }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -415,6 +418,7 @@ export function DayGrid({
           branchName={branch.name}
           catalog={catalog}
           canWrite={canWrite}
+          isAdmin={isAdmin}
           onClose={closeDialog}
         />
       ) : null}

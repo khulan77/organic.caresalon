@@ -48,29 +48,58 @@ export default async function ReportsPage(props: PageProps<"/reports">) {
 
       <div className="min-h-0 flex-1 space-y-6 overflow-auto scrollbar-slim p-4 md:p-6">
         {/*
-          Нэг гол тоо — нийт орлого. Задаргаа нь доор нь жижгээр:
-          үйлчилгээ хэд, нэмэлт төлбөр хэд, хэдэн захиалга.
+          Нэг гол тоо — нийт орлого. Задаргаа нь хажуудаа тусдаа хайрцгуудаар:
+          үйлчилгээ хэд, нэмэлт төлбөр хэд, хэдэн захиалга, нэг захиалга дунджаар хэд.
         */}
-        <section className="rounded-xl border border-sand-200 bg-white px-5 py-5 md:px-6 md:py-6">
-          <p className="text-sm text-sand-500">Нийт орлого</p>
-          {/*
-            Гол тоо нь sans, ЖИГД БУС цифрээр. Serif эсвэл `tabular-nums`
-            хэрэглэвэл том хэмжээнд сул, чимэглэл шиг харагддаг — жигд өргөнтэй
-            цифр нь зөвхөн багана дотор дээрээс доош эгнэх үед хэрэгтэй.
-          */}
-          <p className="mt-1 text-4xl font-semibold tracking-tight text-sand-900 md:text-5xl">
-            {formatPrice(report.total.total)}
-          </p>
+        <section className="grid gap-3 lg:grid-cols-[1.4fr_1fr]">
+          <div className="relative overflow-hidden rounded-2xl bg-brand-700 px-5 py-6 text-white shadow-sm md:px-6">
+            {/* Намуухан гэрэлтэлт — тоо нь дэвсгэрээсээ тодорно */}
+            <span
+              aria-hidden
+              className="pointer-events-none absolute -right-16 -top-16 size-52 rounded-full bg-white/5"
+            />
+            <p className="text-sm text-brand-100">Нийт орлого</p>
+            {/*
+              Гол тоо нь sans, ЖИГД БУС цифрээр. Serif эсвэл `tabular-nums`
+              хэрэглэвэл том хэмжээнд сул, чимэглэл шиг харагддаг — жигд өргөнтэй
+              цифр нь зөвхөн багана дотор дээрээс доош эгнэх үед хэрэгтэй.
+            */}
+            <p className="mt-1 text-4xl font-semibold tracking-tight md:text-5xl">
+              {formatPrice(report.total.total)}
+            </p>
+            <p className="mt-2 text-sm text-brand-100">
+              {formatDateLong(start)} – {formatDateLong(end)}
+            </p>
+          </div>
 
-          <dl className="mt-4 flex flex-wrap gap-x-8 gap-y-3 border-t border-sand-100 pt-4">
-            <Figure label="Үйлчилгээ" value={formatPrice(report.total.services)} />
-            <Figure label="Нэмэлт төлбөр" value={formatPrice(report.total.extra)} />
-            <Figure label="Захиалга" value={String(report.visits)} />
+          <dl className="grid grid-cols-2 gap-3">
+            <Figure
+              label="Үйлчилгээ"
+              value={formatPrice(report.total.services)}
+            />
+            <Figure
+              label="Нэмэлт төлбөр"
+              value={formatPrice(report.total.extra)}
+            />
+            <Figure label="Захиалга" value={`${report.visits}`} />
+            <Figure
+              label="Дундаж дүн"
+              value={
+                report.visits > 0
+                  ? formatPrice(Math.round(report.total.total / report.visits))
+                  : "—"
+              }
+            />
           </dl>
         </section>
 
         <section>
-          <h2 className="mb-3 text-sm font-semibold text-sand-800">Өдрөөр</h2>
+          <h2 className="mb-3 text-sm font-semibold text-sand-800">
+            Өдрөөр
+            <span className="ml-2 font-normal text-sand-500">
+              {report.days.length} өдөр
+            </span>
+          </h2>
           <RevenueChart days={report.days} />
         </section>
 
@@ -80,11 +109,14 @@ export default async function ReportsPage(props: PageProps<"/reports">) {
   );
 }
 
+/** Гол тооны хажуугийн жижиг хайрцаг. */
 function Figure({ label, value }: { label: string; value: string }) {
   return (
-    <div>
+    <div className="flex flex-col justify-center rounded-2xl border border-sand-200 bg-white px-4 py-3">
       <dt className="text-xs text-sand-500">{label}</dt>
-      <dd className="mt-0.5 text-sm font-medium text-sand-900">{value}</dd>
+      <dd className="mt-1 text-lg font-semibold tracking-tight text-sand-900">
+        {value}
+      </dd>
     </div>
   );
 }

@@ -78,6 +78,7 @@ export default async function CalendarPage(props: PageProps<"/calendar">) {
           closure={schedule.closure}
           catalog={catalog}
           canWrite={canWrite}
+          isAdmin={user.role === "ADMIN"}
         />
       </main>
     );

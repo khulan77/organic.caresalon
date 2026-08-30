@@ -54,7 +54,7 @@ export function CalendarHeader({
   return (
     <header className="no-print shrink-0 bg-sand-50">
       {/* ── Мөр 1: огноо ба үйлдэл ── */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2.5 pb-3 pl-16 pr-4 pt-4 md:gap-x-4 md:px-6 md:pt-5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2.5 px-4 pb-3 pt-4 md:gap-x-4 md:px-6 md:pt-5">
         <button
           type="button"
           onClick={() => navigate({ dateKey: today })}

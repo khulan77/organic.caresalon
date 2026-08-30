@@ -11,7 +11,6 @@ import {
   deleteService,
   saveCategory,
   saveService,
-  toggleService,
 } from "@/app/(app)/services/actions";
 import { PageHeader } from "@/components/page-header";
 import { Modal } from "@/components/ui/modal";
@@ -205,53 +204,34 @@ export function ServicesManager({
                 </div>
 
                 {category.services.length === 0 ? (
-                  <p className="rounded-xl border border-dashed border-sand-300 px-4 py-5 text-sm text-sand-500">
+                  <p className="rounded-2xl border border-dashed border-sand-300 px-4 py-5 text-sm text-sand-500">
                     Үйлчилгээ алга.
                   </p>
                 ) : (
-                  <div className="scrollbar-slim overflow-x-auto rounded-xl border border-sand-200 bg-white">
-                    <table className="w-full min-w-[440px] text-sm">
-                      <thead className="border-b border-sand-200 bg-sand-100/60 text-left text-xs text-sand-600">
-                        <tr>
-                          <th className="px-4 py-2 font-medium">Нэр</th>
-                          <th className="hidden w-28 px-4 py-2 font-medium sm:table-cell">Хугацаа</th>
-                          <th className="w-44 px-4 py-2 text-right font-medium md:w-56">Үнэ</th>
-                          {canEdit ? (
-                            <th className="w-36 px-4 py-2 text-right font-medium md:w-44">
-                              Үйлдэл
-                            </th>
-                          ) : null}
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-sand-100">
-                        {category.services.map((service) => (
-                          <ServiceRow
-                            key={service.id}
-                            service={service}
-                            categoryColor={category.color}
-                            showBranch={branches.length > 1}
-                            canEdit={canEdit}
-                            isPending={isPending}
-                            onEdit={() =>
-                              setEditing({
-                                kind: "service",
-                                categoryId: category.id,
-                                service,
-                              })
-                            }
-                            onToggle={() =>
-                              run(() => toggleService(service.id, !service.isActive))
-                            }
-                            onDelete={() => {
-                              if (confirm(`«${service.name}»-г бүрмөсөн устгах уу?`)) {
-                                run(() => deleteService(service.id));
-                              }
-                            }}
-                          />
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  <ul className="space-y-2">
+                    {category.services.map((service) => (
+                      <ServiceCard
+                        key={service.id}
+                        service={service}
+                        categoryColor={category.color}
+                        showBranch={branches.length > 1}
+                        canEdit={canEdit}
+                        isPending={isPending}
+                        onEdit={() =>
+                          setEditing({
+                            kind: "service",
+                            categoryId: category.id,
+                            service,
+                          })
+                        }
+                        onDelete={() => {
+                          if (confirm(`«${service.name}»-г бүрмөсөн устгах уу?`)) {
+                            run(() => deleteService(service.id));
+                          }
+                        }}
+                      />
+                    ))}
+                  </ul>
                 )}
               </section>
             ))}
@@ -306,14 +286,20 @@ function FilterPill({
   );
 }
 
-function ServiceRow({
+/**
+ * Үйлчилгээний нэг карт.
+ *
+ * Зүүн талд өнгөт хавтан (үйлчилгээний хуанли дээрх өнгө), голд нэр ба
+ * үнэ/хугацаа, баруун талд ЗӨВХӨН «Засах», «Устгах» хоёр товч.
+ * Идэвхтэй эсэхийг засах цонхноос сольдог.
+ */
+function ServiceCard({
   service,
   categoryColor,
   showBranch,
   canEdit,
   isPending,
   onEdit,
-  onToggle,
   onDelete,
 }: {
   service: Service;
@@ -322,108 +308,105 @@ function ServiceRow({
   canEdit: boolean;
   isPending: boolean;
   onEdit: () => void;
-  onToggle: () => void;
   onDelete: () => void;
 }) {
   const sale = isSaleActive(service);
   const percent = salePercent(service);
-  const used = service._count.items > 0;
+  const color = service.color ?? categoryColor;
+  const initial = service.name.trim().slice(0, 1).toLocaleUpperCase("mn-MN");
 
   return (
-    <tr className={service.isActive ? "hover:bg-sand-50" : "bg-sand-50/60"}>
-      <td className="px-4 py-2.5">
-        <span className="flex items-center gap-2">
-          <span
-            aria-hidden
-            className="size-2 shrink-0 rounded-full"
-            style={{ backgroundColor: service.color ?? categoryColor }}
-          />
-          <span
-            className={service.isActive ? "text-sand-900" : "text-sand-400 line-through"}
-          >
-            {service.name}
-          </span>
-          {!service.isActive ? (
-            <span className="rounded bg-sand-200 px-1.5 py-0.5 text-xs text-sand-600">
-              идэвхгүй
-            </span>
-          ) : null}
-          {showBranch ? (
-            <span
-              className={`shrink-0 rounded px-1.5 py-0.5 text-xs ${
-                service.branch
-                  ? "bg-brand-50 text-brand-700"
-                  : "bg-sand-100 text-sand-500"
-              }`}
-            >
-              {service.branch?.name ?? "бүх салбар"}
-            </span>
-          ) : null}
+    <li>
+      <div
+        className={`flex items-center gap-3 rounded-2xl border border-sand-200 bg-white p-2.5 transition hover:border-sand-300 hover:shadow-sm sm:p-3 ${
+          service.isActive ? "" : "opacity-60"
+        }`}
+      >
+        {/* Өнгөт хавтан — хуанли дээр энэ өнгөөр харагдана */}
+        <span
+          aria-hidden
+          className="flex size-12 shrink-0 items-center justify-center rounded-2xl font-serif text-lg"
+          style={{
+            backgroundColor: `color-mix(in srgb, ${color} 16%, white)`,
+            color: `color-mix(in srgb, ${color} 78%, #22201d)`,
+          }}
+        >
+          {initial}
         </span>
-        {/* Гар утсанд «Хугацаа» багана нуугддаг тул энд харуулна */}
-        <span className="ml-4 block text-xs text-sand-500 sm:hidden">
-          {formatDuration(service.durationMin)}
-        </span>
-      </td>
-      <td className="hidden px-4 py-2.5 text-sand-600 sm:table-cell">
-        {formatDuration(service.durationMin)}
-      </td>
-      <td className="px-4 py-2.5 text-right">
-        {sale ? (
-          <span className="flex items-center justify-end gap-2">
-            <span className="text-sand-400 line-through">
-              {formatPrice(service.price)}
+
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="truncate font-medium text-sand-900">
+              {service.name}
             </span>
-            <span className="font-semibold tabular-nums text-warn-600">
-              {formatPrice(service.salePrice as number)}
-            </span>
-            <span className="rounded bg-warn-50 px-1.5 py-0.5 text-xs font-medium text-warn-600">
-              −{percent}%
-            </span>
-          </span>
-        ) : (
-          <span className="font-medium tabular-nums text-sand-900">
-            {formatPrice(service.price)}
-          </span>
-        )}
-        {sale && service.saleEndsAt ? (
-          <span className="mt-0.5 block text-xs text-sand-500">
-            {toDateKey(service.saleEndsAt)} хүртэл
-          </span>
-        ) : null}
-      </td>
-      {canEdit ? (
-        <td className="px-4 py-2.5 text-right">
-          <span className="flex justify-end gap-3 text-sm">
+            {sale ? (
+              <span className="shrink-0 rounded-full bg-warn-50 px-2 py-0.5 text-xs font-medium text-warn-700">
+                −{percent}%
+              </span>
+            ) : null}
+            {!service.isActive ? (
+              <span className="shrink-0 rounded-full bg-sand-200 px-2 py-0.5 text-xs text-sand-600">
+                идэвхгүй
+              </span>
+            ) : null}
+            {showBranch ? (
+              <span
+                className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${
+                  service.branch
+                    ? "bg-brand-50 text-brand-700"
+                    : "bg-sand-100 text-sand-500"
+                }`}
+              >
+                {service.branch?.name ?? "бүх салбар"}
+              </span>
+            ) : null}
+          </div>
+
+          <p className="mt-0.5 text-sm text-sand-500">
+            {sale ? (
+              <>
+                <span className="line-through">{formatPrice(service.price)}</span>{" "}
+                <span className="font-semibold text-warn-600">
+                  {formatPrice(service.salePrice as number)}
+                </span>
+              </>
+            ) : (
+              <span className="font-medium text-sand-800">
+                {formatPrice(service.price)}
+              </span>
+            )}
+            {" · "}
+            {formatDuration(service.durationMin)}
+          </p>
+
+          {sale && service.saleEndsAt ? (
+            <p className="mt-0.5 text-xs text-sand-400">
+              {toDateKey(service.saleEndsAt)} хүртэл
+            </p>
+          ) : null}
+        </div>
+
+        {canEdit ? (
+          <div className="flex shrink-0 items-center gap-1 sm:gap-2">
             <button
               type="button"
               onClick={onEdit}
-              className="text-sand-600 hover:text-sand-900"
+              className="rounded-full border border-sand-300 px-3 py-1.5 text-sm text-sand-700 transition hover:bg-sand-100 sm:px-4"
             >
               Засах
             </button>
             <button
               type="button"
               disabled={isPending}
-              onClick={onToggle}
-              className="text-sand-600 hover:text-sand-900"
+              onClick={onDelete}
+              className="rounded-full px-2.5 py-1.5 text-sm text-danger-600 transition hover:bg-danger-50 disabled:opacity-50 sm:px-3"
             >
-              {service.isActive ? "Идэвхгүй" : "Идэвхжүүлэх"}
+              Устгах
             </button>
-            {!used ? (
-              <button
-                type="button"
-                disabled={isPending}
-                onClick={onDelete}
-                className="text-danger-600 hover:underline"
-              >
-                Устгах
-              </button>
-            ) : null}
-          </span>
-        </td>
-      ) : null}
-    </tr>
+          </div>
+        ) : null}
+      </div>
+    </li>
   );
 }
 
@@ -655,6 +638,25 @@ function ServiceModal({
           onChange={setColor}
           hint="Хуанли дээрх блокийн өнгө"
         />
+
+        {/* Идэвхгүй үйлчилгээ шинэ захиалгын жагсаалтад гарахгүй */}
+        <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-sand-200 p-3">
+          <input
+            type="checkbox"
+            name="isActive"
+            defaultChecked={service?.isActive ?? true}
+            className="mt-0.5 size-4 accent-brand-600"
+          />
+          <span>
+            <span className="block text-sm font-medium text-sand-800">
+              Идэвхтэй
+            </span>
+            <span className="mt-0.5 block text-xs text-sand-500">
+              Тэмдэглэгээг авбал шинэ цаг захиалахад энэ үйлчилгээ сонголтод
+              гарахгүй. Хуучин захиалгууд хэвээрээ үлдэнэ.
+            </span>
+          </span>
+        </label>
 
         {result && !result.ok ? <Issues issues={result.issues} /> : null}
       </form>

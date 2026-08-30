@@ -12,7 +12,8 @@ import { formatPrice } from "@/lib/labels";
  * гарчиг нь юуг хэмжиж байгааг хэлж байна.
  */
 
-const BAR_COLOR = "#14804f";
+/* Нэг л хэмжигдэхүүн (орлого) — өдрийн графиктай ИЖИЛ өнгө хэрэглэнэ. */
+const BAR_COLOR = "#0d7350";
 
 type Tab = "services" | "staff";
 
@@ -48,6 +49,9 @@ export function RevenueBreakdown({
   return (
     <section>
       <div className="mb-3 flex flex-wrap items-center gap-3">
+        <h2 className="shrink-0 text-sm font-semibold text-sand-800">
+          Задаргаа
+        </h2>
         <div className="flex shrink-0 items-center gap-1 rounded-full bg-sand-200/70 p-1">
           <Tab active={tab === "services"} onClick={() => setTab("services")}>
             Үйлчилгээгээр
@@ -66,9 +70,9 @@ export function RevenueBreakdown({
           Энэ хугацаанд өгөгдөл алга.
         </p>
       ) : (
-        <ul className="divide-y divide-sand-100 rounded-xl border border-sand-200 bg-white">
+        <ul className="divide-y divide-sand-100 overflow-hidden rounded-2xl border border-sand-200 bg-white">
           {rows.map((row) => (
-            <li key={row.key} className="px-4 py-2.5">
+            <li key={row.key} className="px-4 py-3 transition hover:bg-sand-50">
               <div className="flex items-baseline gap-3">
                 <span className="flex min-w-0 flex-1 items-center gap-2">
                   {row.color ? (
@@ -93,12 +97,16 @@ export function RevenueBreakdown({
               {/* Харьцангуй хэмжээг нүдээр харуулах богино багана */}
               <span
                 aria-hidden
-                className="mt-1.5 block h-1.5 rounded-full"
-                style={{
-                  width: `${Math.max(1.5, (row.amount / peak) * 100)}%`,
-                  backgroundColor: BAR_COLOR,
-                }}
-              />
+                className="mt-2 block h-1.5 w-full overflow-hidden rounded-full bg-sand-100"
+              >
+                <span
+                  className="block h-full rounded-full"
+                  style={{
+                    width: `${Math.max(1.5, (row.amount / peak) * 100)}%`,
+                    backgroundColor: BAR_COLOR,
+                  }}
+                />
+              </span>
             </li>
           ))}
         </ul>

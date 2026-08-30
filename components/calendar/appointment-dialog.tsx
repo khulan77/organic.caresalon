@@ -16,7 +16,12 @@ import type {
 } from "@/lib/queries";
 import { STATUS_LABELS, formatDuration, formatPrice } from "@/lib/labels";
 import { effectivePrice, isSaleActive } from "@/lib/pricing";
-import { formatMinutes, toDateKey, toLocalMinutes } from "@/lib/time";
+import {
+  formatMinutes,
+  parseMinutes,
+  toDateKey,
+  toLocalMinutes,
+} from "@/lib/time";
 import {
   addPayment,
   createAppointment,
@@ -27,17 +32,10 @@ import {
   settleAppointment,
   updateAppointment,
 } from "@/app/(app)/calendar/actions";
-import {
-  PAYMENT_METHODS,
-  PAYMENT_METHOD_LABELS,
-  PAYMENT_STATE_LABELS,
-  summarize,
-} from "@/lib/payments";
+import { PAYMENT_STATE_LABELS, summarize } from "@/lib/payments";
 import type { ActionResult } from "@/lib/action-result";
-import type {
-  AppointmentStatus,
-  PaymentMethod,
-} from "@/lib/generated/prisma/enums";
+import type { AppointmentStatus } from "@/lib/generated/prisma/enums";
+import { addTimeOff } from "@/app/(app)/staff/actions";
 import { Field, Issues, inputClass } from "@/components/ui/form";
 import { CopyButton } from "@/components/ui/copy-button";
 import { buildBookingText } from "@/lib/booking-text";
@@ -82,6 +80,8 @@ type Props = {
   catalog: ServiceCatalog;
   /** Худал бол зөвхөн харах — бүх талбар идэвхгүй, хадгалах товч гарахгүй */
   canWrite: boolean;
+  /** Админ бол энэ цагийг чөлөө болгож тэмдэглэж чадна */
+  isAdmin: boolean;
   onClose: () => void;
 };
 
@@ -115,6 +115,7 @@ export function AppointmentDialog({
   branchName,
   catalog,
   canWrite,
+  isAdmin,
   onClose,
 }: Props) {
   const editing = state.mode === "edit" ? state.appointment : null;
@@ -206,13 +207,17 @@ export function AppointmentDialog({
    * `key` нь зөвхөн React-ийн жагсаалтад зориулсан, сервер рүү явахгүй.
    */
   const [charges, setCharges] = useState<{ key: string; amount: string }[]>(
-    () =>
-      editing
+    () => {
+      const existing = editing
         ? editing.charges.map((charge) => ({
             key: charge.id,
             amount: String(charge.amount),
           }))
-        : [],
+        : [];
+      // Дарж нээх шаардлагагүй — хоосон мөр анхнаасаа харагдана.
+      // Хоосон мөр (дүн 0) хадгалахад шүүгдэж хаягдана.
+      return existing.length > 0 ? existing : [{ key: "row-0", amount: "" }];
+    },
   );
 
   const extraTotal = charges.reduce(
@@ -245,6 +250,18 @@ export function AppointmentDialog({
   function removeChargeRow(key: string) {
     setCharges((current) => current.filter((charge) => charge.key !== key));
   }
+
+  /**
+   * Шинэ цагийн цонхны хоёр горим: захиалга авах уу, эсвэл тэр цагийг
+   * ажилтны чөлөө болгох уу. Чөлөө зөвхөн админд.
+   */
+  const [tab, setTab] = useState<"book" | "off">("book");
+  const offMode = state.mode === "create" && isAdmin && tab === "off";
+
+  /** Захиалахдаа шууд бүтнээр төлсөн эсэх. */
+  const [paidInFull, setPaidInFull] = useState(false);
+  /** Урьдчилж авсан дүн — «төлсөн» биш үед л хэрэглэнэ. */
+  const [deposit, setDeposit] = useState("");
 
   const action = state.mode === "create" ? createAppointment : updateAppointment;
   const [result, formAction, isPending] = useActionState<
@@ -299,14 +316,46 @@ export function AppointmentDialog({
         className="relative flex max-h-[92dvh] w-full max-w-2xl flex-col rounded-t-2xl bg-white shadow-xl sm:max-h-[92vh] sm:rounded-2xl"
       >
         <header className="flex shrink-0 items-start justify-between gap-3 border-b border-sand-200 px-5 py-4">
-          <div>
+          <div className="min-w-0">
             <h2 className="font-serif text-lg text-sand-900">
               {!canWrite
                 ? "Цаг захиалга"
                 : state.mode === "create"
-                  ? "Шинэ цаг захиалга"
+                  ? offMode
+                    ? "Чөлөө өгөх"
+                    : "Шинэ цаг захиалга"
                   : "Цаг захиалга засах"}
             </h2>
+
+            {/* Сул цагийг захиалга болгох уу, чөлөө болгох уу — зөвхөн админд */}
+            {state.mode === "create" && canWrite && isAdmin ? (
+              <div className="mt-2 flex items-center gap-1 rounded-full bg-sand-200/70 p-1">
+                <button
+                  type="button"
+                  onClick={() => setTab("book")}
+                  aria-pressed={tab === "book"}
+                  className={`whitespace-nowrap rounded-full px-3 py-1 text-xs transition ${
+                    tab === "book"
+                      ? "bg-white font-medium text-sand-900 shadow-sm"
+                      : "text-sand-500 hover:text-sand-800"
+                  }`}
+                >
+                  Цаг захиалга
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTab("off")}
+                  aria-pressed={tab === "off"}
+                  className={`whitespace-nowrap rounded-full px-3 py-1 text-xs transition ${
+                    tab === "off"
+                      ? "bg-white font-medium text-sand-900 shadow-sm"
+                      : "text-sand-500 hover:text-sand-800"
+                  }`}
+                >
+                  Чөлөө
+                </button>
+              </div>
+            ) : null}
             {editing ? (
               <span
                 className="mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium"
@@ -356,6 +405,15 @@ export function AppointmentDialog({
           </div>
         </header>
 
+        {offMode ? (
+          <TimeOffPanel
+            staff={staff}
+            defaultStaffId={state.mode === "create" ? state.staffId : ""}
+            dateKey={state.dateKey}
+            defaultStartMin={defaultStartMin}
+            onClose={onClose}
+          />
+        ) : (
         <form
           action={formAction}
           className="flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-slim"
@@ -412,75 +470,135 @@ export function AppointmentDialog({
               <SectionTitle>
                 Үйлчилгээ
                 {selectedServices.length > 0 ? (
-                  <span className="ml-2 font-normal text-sand-500">
+                  <span className="ml-2 inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-2 py-0.5 align-middle text-xs font-medium text-brand-700 ring-1 ring-brand-200">
+                    {selectedServices.length} сонгосон ·{" "}
                     {formatDuration(totalDuration)}
                   </span>
-                ) : null}
+                ) : (
+                  <span className="ml-2 font-normal text-sand-400">
+                    дарж сонгоно
+                  </span>
+                )}
               </SectionTitle>
 
-              <div className="space-y-3">
-                {catalog.map((category) => (
-                  <div key={category.id}>
-                    <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-sand-500">
-                      <span
-                        aria-hidden
-                        className="size-2 rounded-full"
-                        style={{ backgroundColor: category.color }}
-                      />
-                      {category.name}
-                    </p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {category.services.map((service) => {
-                        const active = serviceIds.includes(service.id);
-                        const color = service.color ?? category.color;
-                        const sale = isSaleActive(service);
-                        return (
-                          <button
-                            key={service.id}
-                            type="button"
-                            onClick={() => toggleService(service.id)}
-                            aria-pressed={active}
-                            className={`rounded-xl border px-3 py-2 text-left text-xs transition active:scale-[0.98] ${
-                              active
-                                ? "shadow-sm"
-                                : "border-sand-300 text-sand-700 hover:border-sand-400 hover:bg-sand-50"
-                            }`}
-                            style={
-                              active
-                                ? {
-                                    borderColor: color,
-                                    backgroundColor: `color-mix(in srgb, ${color} 10%, white)`,
-                                  }
-                                : undefined
-                            }
+              <div className="space-y-2.5">
+                {catalog.map((category) => {
+                  const picked = category.services.filter((service) =>
+                    serviceIds.includes(service.id),
+                  ).length;
+                  return (
+                    <div
+                      key={category.id}
+                      className="overflow-hidden rounded-2xl ring-1 ring-sand-200"
+                    >
+                      {/* Ангиллын толгой — тухайн ангиллын өнгөөр намуухан будна */}
+                      <div
+                        className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold"
+                        style={{
+                          backgroundColor: `color-mix(in srgb, ${category.color} 13%, white)`,
+                          color: `color-mix(in srgb, ${category.color} 72%, #22201d)`,
+                        }}
+                      >
+                        <span
+                          aria-hidden
+                          className="size-2 shrink-0 rounded-full"
+                          style={{ backgroundColor: category.color }}
+                        />
+                        <span className="truncate">{category.name}</span>
+                        {picked > 0 ? (
+                          <span
+                            className="ml-auto shrink-0 rounded-full bg-white/70 px-1.5 text-[11px] tabular-nums"
+                            aria-label={`${picked} сонгосон`}
                           >
-                            <span
-                              className="block font-medium"
-                              style={{ color: active ? color : undefined }}
+                            {picked}
+                          </span>
+                        ) : null}
+                      </div>
+
+                      <div className="grid gap-1.5 bg-white p-1.5 sm:grid-cols-2">
+                        {category.services.map((service) => {
+                          const active = serviceIds.includes(service.id);
+                          const color = service.color ?? category.color;
+                          const sale = isSaleActive(service);
+                          return (
+                            <button
+                              key={service.id}
+                              type="button"
+                              onClick={() => toggleService(service.id)}
+                              aria-pressed={active}
+                              className={`flex items-center gap-2.5 rounded-xl border px-2.5 py-2 text-left transition active:scale-[0.98] ${
+                                active
+                                  ? "shadow-sm"
+                                  : "border-sand-200 bg-sand-50/70 hover:border-sand-300 hover:bg-white"
+                              }`}
+                              style={
+                                active
+                                  ? {
+                                      borderColor: color,
+                                      backgroundColor: `color-mix(in srgb, ${color} 11%, white)`,
+                                    }
+                                  : undefined
+                              }
                             >
-                              {service.name}
-                            </span>
-                            <span className="block text-[11px] text-sand-500">
-                              {formatDuration(service.durationMin)} ·{" "}
-                              {sale ? (
-                                <>
-                                  <span className="line-through">
-                                    {formatPrice(service.price)}
-                                  </span>{" "}
-                                  <span className="font-medium text-warn-600">
-                                    {formatPrice(service.salePrice as number)}
-                                  </span>
-                                </>
-                              ) : (
-                                formatPrice(service.price)
-                              )}
-                            </span>
-                          </button>
-                        );
-                      })}
+                              {/* Сонгосон эсэх — өнгөнөөс гадна тэмдгээр ч харагдана */}
+                              <span
+                                aria-hidden
+                                className="flex size-5 shrink-0 items-center justify-center rounded-full border transition"
+                                style={
+                                  active
+                                    ? { backgroundColor: color, borderColor: color }
+                                    : { borderColor: "var(--color-sand-300)" }
+                                }
+                              >
+                                {active ? (
+                                  <svg
+                                    viewBox="0 0 24 24"
+                                    className="size-3 text-white"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth={3.5}
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                  >
+                                    <path d="m5 13 4 4L19 7" />
+                                  </svg>
+                                ) : null}
+                              </span>
+
+                              <span className="min-w-0 flex-1">
+                                <span
+                                  className="block truncate text-[13px] font-medium"
+                                  style={{
+                                    color: active
+                                      ? `color-mix(in srgb, ${color} 78%, #22201d)`
+                                      : undefined,
+                                  }}
+                                >
+                                  {service.name}
+                                </span>
+                                <span className="mt-0.5 block text-[11px] text-sand-500">
+                                  {formatDuration(service.durationMin)} ·{" "}
+                                  {sale ? (
+                                    <>
+                                      <span className="line-through">
+                                        {formatPrice(service.price)}
+                                      </span>{" "}
+                                      <span className="font-medium text-warn-600">
+                                        {formatPrice(service.salePrice as number)}
+                                      </span>
+                                    </>
+                                  ) : (
+                                    formatPrice(service.price)
+                                  )}
+                                </span>
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </section>
 
@@ -611,33 +729,20 @@ export function AppointmentDialog({
             {/* Нэмэлт төлбөр, хөнгөлөлт ба тооцоо */}
             {selectedServices.length > 0 ? (
               <section className="rounded-xl border border-sand-200 p-3">
-                {/* ── Нэмэлт төлбөр ── */}
+                {/* ── Нэмэлт төлбөр — талбар нь шууд харагдана ── */}
                 <div className="mb-3">
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <span className="text-sm font-medium text-sand-800">
-                      Нэмэлт төлбөр
-                    </span>
-                    <button
-                      type="button"
-                      onClick={addChargeRow}
-                      className="rounded-lg border border-sand-300 px-2.5 py-1 text-xs text-sand-700 transition hover:bg-sand-100"
-                    >
-                      + Нэмэх
-                    </button>
-                  </div>
+                  <span className="block text-sm font-medium text-sand-800">
+                    Нэмэлт төлбөр
+                  </span>
+                  <p className="mb-2 text-xs text-sand-500">
+                    Урт хумс, нэмэлт чимэглэл гэх мэт үйлчилгээний жагсаалтад
+                    байхгүй төлбөрийг энд бичнэ. Хоосон орхивол тооцогдохгүй.
+                  </p>
 
-                  {charges.length === 0 ? (
-                    <p className="text-xs text-sand-500">
-                      Урт хумс, нэмэлт чимэглэл гэх мэт үйлчилгээний жагсаалтад
-                      байхгүй төлбөрийг энд нэмнэ.
-                    </p>
-                  ) : (
-                    <div className="space-y-2">
-                      {charges.map((charge) => (
-                        <div
-                          key={charge.key}
-                          className="flex items-center gap-2"
-                        >
+                  <div className="space-y-1.5">
+                    {charges.map((charge) => (
+                      <div key={charge.key} className="flex items-center gap-2">
+                        <div className="relative min-w-0 flex-1 sm:max-w-[13rem]">
                           <input
                             type="number"
                             name="chargeAmount"
@@ -650,21 +755,31 @@ export function AppointmentDialog({
                             }
                             aria-label="Нэмэлт төлбөрийн дүн"
                             placeholder="0"
-                            className={`${inputClass} min-w-0 flex-1 text-right sm:max-w-[12rem]`}
+                            className={`${inputClass} pr-7 text-right`}
                           />
-                          <span className="shrink-0 text-sm text-sand-500">₮</span>
-                          <button
-                            type="button"
-                            onClick={() => removeChargeRow(charge.key)}
-                            aria-label="Нэмэлт төлбөр хасах"
-                            className="shrink-0 rounded-lg p-1.5 text-sand-400 transition hover:bg-sand-100 hover:text-sand-800"
-                          >
-                            ✕
-                          </button>
+                          <span className="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-sm text-sand-400">
+                            ₮
+                          </span>
                         </div>
-                      ))}
-                    </div>
-                  )}
+                        <button
+                          type="button"
+                          onClick={() => removeChargeRow(charge.key)}
+                          aria-label="Нэмэлт төлбөр хасах"
+                          className="shrink-0 rounded-lg p-1.5 text-sand-400 transition hover:bg-sand-100 hover:text-sand-800"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={addChargeRow}
+                    className="mt-2 rounded-lg border border-sand-300 px-2.5 py-1 text-xs text-sand-700 transition hover:bg-sand-100"
+                  >
+                    + Дахин нэмэх
+                  </button>
                 </div>
 
                 <dl className="mt-3 space-y-1 border-t border-sand-100 pt-3 text-sm">
@@ -693,34 +808,81 @@ export function AppointmentDialog({
               />
             ) : selectedServices.length > 0 ? (
               <section className="rounded-xl border border-sand-200 p-3">
-                <SectionTitle>Урьдчилгаа</SectionTitle>
-                <p className="mb-2 text-xs text-sand-500">
-                  Захиалахдаа урьдчилж авсан төлбөр байвал энд бичнэ. Үлдэгдлийг
-                  дараа нь захиалгын цонхноос бүртгэнэ.
-                </p>
-                <div className="flex flex-wrap gap-2 sm:max-w-md">
-                  <input
-                    type="number"
-                    name="depositAmount"
-                    min={0}
-                    max={totalPrice}
-                    step={1000}
-                    placeholder="0"
-                    className={`${inputClass} min-w-[7rem] flex-1 text-right`}
-                  />
-                  <select
-                    name="depositMethod"
-                    defaultValue="CASH"
-                    aria-label="Төлбөрийн хэлбэр"
-                    className={`${inputClass} w-32 shrink-0`}
+                <SectionTitle>Төлбөр</SectionTitle>
+
+                {/* Сервер рүү явах дүн — «Төлсөн» бол бүтэн дүн */}
+                <input
+                  type="hidden"
+                  name="depositAmount"
+                  value={
+                    paidInFull
+                      ? totalPrice
+                      : Number(deposit.replace(/\D/g, "")) || 0
+                  }
+                />
+
+                <button
+                  type="button"
+                  onClick={() => setPaidInFull((current) => !current)}
+                  aria-pressed={paidInFull}
+                  className={`flex w-full items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold transition active:scale-[0.99] ${
+                    paidInFull
+                      ? "border-ok-600 bg-ok-500 text-white shadow-sm hover:bg-ok-600"
+                      : "border-sand-300 bg-white text-sand-700 hover:border-ok-500 hover:bg-ok-50 hover:text-ok-700"
+                  }`}
+                >
+                  <span
+                    aria-hidden
+                    className={`flex size-5 shrink-0 items-center justify-center rounded-full border ${
+                      paidInFull
+                        ? "border-white/70 bg-white/20"
+                        : "border-sand-300"
+                    }`}
                   >
-                    {PAYMENT_METHODS.map((method) => (
-                      <option key={method} value={method}>
-                        {PAYMENT_METHOD_LABELS[method]}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                    {paidInFull ? (
+                      <svg
+                        viewBox="0 0 24 24"
+                        className="size-3"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={3.5}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="m5 13 4 4L19 7" />
+                      </svg>
+                    ) : null}
+                  </span>
+                  Төлсөн · {formatPrice(totalPrice)}
+                </button>
+
+                {paidInFull ? (
+                  <p className="mt-1.5 text-center text-[11px] text-sand-500">
+                    Захиалга үүсэхэд бүтэн төлбөр бүртгэгдэнэ.
+                  </p>
+                ) : (
+                  <div className="mt-3 border-t border-sand-100 pt-3">
+                    <label className="mb-1 block text-xs text-sand-500">
+                      Урьдчилгаа авсан бол (заавал биш)
+                    </label>
+                    <div className="relative sm:max-w-[13rem]">
+                      <input
+                        type="number"
+                        min={0}
+                        max={totalPrice}
+                        step={1000}
+                        inputMode="numeric"
+                        value={deposit}
+                        onChange={(event) => setDeposit(event.target.value)}
+                        placeholder="0"
+                        className={`${inputClass} pr-7 text-right`}
+                      />
+                      <span className="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-sm text-sand-400">
+                        ₮
+                      </span>
+                    </div>
+                  </div>
+                )}
               </section>
             ) : null}
 
@@ -780,8 +942,183 @@ export function AppointmentDialog({
             </div>
           </footer>
         </form>
+        )}
       </div>
     </div>
+  );
+}
+
+/** Хугацааны түргэн сонголтууд — минутаар. */
+const OFF_PRESETS = [30, 60, 90, 120, 180, 240];
+
+/**
+ * Сул цаг дээр шууд чөлөө тэмдэглэх самбар.
+ *
+ * Хуанли дээр дарсан ажилтан, огноо, цаг нь бэлдэгдэж ирнэ — админ зөвхөн
+ * хэдэн цаг болохыг сонгоод хадгална. Тухайн цагт захиалга байвал сервер
+ * зөвшөөрөхгүй бөгөөд аль захиалгууд нь давхцаж байгааг хэлнэ.
+ */
+function TimeOffPanel({
+  staff,
+  defaultStaffId,
+  dateKey,
+  defaultStartMin,
+  onClose,
+}: {
+  staff: DayStaff[];
+  defaultStaffId: string;
+  dateKey: string;
+  defaultStartMin: number;
+  onClose: () => void;
+}) {
+  const [result, formAction, isPending] = useActionState<
+    ActionResult | null,
+    FormData
+  >(addTimeOff, null);
+
+  const [staffId, setStaffId] = useState(defaultStaffId);
+  const [startMin, setStartMin] = useState(
+    Math.round(defaultStartMin / SLOT_STEP) * SLOT_STEP,
+  );
+  /** null бол бүтэн өдөр. */
+  const [duration, setDuration] = useState<number | null>(60);
+
+  useEffect(() => {
+    if (result?.ok) onClose();
+  }, [result, onClose]);
+
+  // Өдрийн төгсгөлөөс хальж болохгүй
+  const endMin = duration === null ? 24 * 60 : Math.min(startMin + duration, 24 * 60);
+  const member = staff.find((m) => m.id === staffId);
+
+  return (
+    <form
+      action={formAction}
+      className="flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-slim"
+    >
+      <input type="hidden" name="staffId" value={staffId} />
+      <input type="hidden" name="date" value={dateKey} />
+      {duration === null ? (
+        <input type="hidden" name="wholeDay" value="on" />
+      ) : (
+        <>
+          <input type="hidden" name="startTime" value={formatMinutes(startMin)} />
+          <input type="hidden" name="endTime" value={formatMinutes(endMin)} />
+        </>
+      )}
+
+      <div className="min-w-0 space-y-5 px-5 py-4">
+        <p className="rounded-lg bg-sand-100/70 px-3 py-2 text-sm text-sand-600">
+          Энэ цагийг ажилтны чөлөө болгож тэмдэглэнэ. Чөлөөтэй цагт шинэ
+          захиалга орохгүй бөгөөд цагийн бүртгэлд улаанаар харагдана.
+        </p>
+
+        <section className="grid gap-3 sm:grid-cols-2">
+          <Field label="Ажилтан">
+            <select
+              value={staffId}
+              onChange={(event) => setStaffId(event.target.value)}
+              className={inputClass}
+            >
+              {staff.map((member) => (
+                <option key={member.id} value={member.id}>
+                  {member.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          <Field label="Эхлэх цаг">
+            <select
+              value={formatMinutes(startMin)}
+              onChange={(event) => setStartMin(parseMinutes(event.target.value))}
+              disabled={duration === null}
+              className={inputClass}
+            >
+              {START_TIMES.map((minute) => (
+                <option key={minute} value={formatMinutes(minute)}>
+                  {formatMinutes(minute)}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </section>
+
+        <section>
+          <SectionTitle>Хэр удаан</SectionTitle>
+          <div className="flex flex-wrap gap-1.5">
+            {OFF_PRESETS.map((minutes) => (
+              <button
+                key={minutes}
+                type="button"
+                onClick={() => setDuration(minutes)}
+                aria-pressed={duration === minutes}
+                className={`rounded-xl border px-3.5 py-2 text-sm transition active:scale-[0.98] ${
+                  duration === minutes
+                    ? "border-brand-600 bg-brand-50 font-medium text-brand-700"
+                    : "border-sand-300 text-sand-700 hover:bg-sand-50"
+                }`}
+              >
+                {formatDuration(minutes)}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setDuration(null)}
+              aria-pressed={duration === null}
+              className={`rounded-xl border px-3.5 py-2 text-sm transition active:scale-[0.98] ${
+                duration === null
+                  ? "border-brand-600 bg-brand-50 font-medium text-brand-700"
+                  : "border-sand-300 text-sand-700 hover:bg-sand-50"
+              }`}
+            >
+              Бүтэн өдөр
+            </button>
+          </div>
+        </section>
+
+        <Field label="Шалтгаан" hint="Цагийн бүртгэл дээр хамт харагдана">
+          <input
+            name="reason"
+            placeholder="Жишээ: Эмнэлэг, Сургалт"
+            className={inputClass}
+          />
+        </Field>
+
+        {result && !result.ok ? <Issues issues={result.issues} /> : null}
+      </div>
+
+      <footer className="sticky bottom-0 flex shrink-0 items-center justify-between gap-3 border-t border-sand-200 bg-white px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-3">
+        <div className="min-w-0 text-sm">
+          <span className="block truncate font-medium text-sand-900">
+            {member?.name ?? "—"}
+          </span>
+          <span className="block text-xs text-sand-500">
+            {duration === null
+              ? "Бүтэн өдөр"
+              : `${formatMinutes(startMin)}–${formatMinutes(endMin)} · ${formatDuration(
+                  endMin - startMin,
+                )}`}
+          </span>
+        </div>
+        <div className="flex shrink-0 gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-sand-300 px-4 py-2 text-sm text-sand-700 transition hover:bg-sand-100"
+          >
+            Болих
+          </button>
+          <button
+            type="submit"
+            disabled={isPending || !staffId || endMin <= startMin}
+            className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700 disabled:opacity-50"
+          >
+            {isPending ? "Хадгалж байна…" : "Чөлөө нэмэх"}
+          </button>
+        </div>
+      </footer>
+    </form>
   );
 }
 
@@ -827,7 +1164,6 @@ function PaymentSection({
   >(addPayment, null);
 
   const [amount, setAmount] = useState("");
-  const [method, setMethod] = useState<PaymentMethod>("CASH");
   const [isDeposit, setIsDeposit] = useState(false);
   const [isRemoving, startRemove] = useTransition();
   const [isSettling, startSettle] = useTransition();
@@ -849,7 +1185,6 @@ function PaymentSection({
     const data = new FormData();
     data.set("appointmentId", appointmentId);
     data.set("amount", amount);
-    data.set("method", method);
     if (isDeposit) data.set("isDeposit", "on");
     startTransition(() => formAction(data));
   }
@@ -858,7 +1193,7 @@ function PaymentSection({
   function settle() {
     setSettleError(null);
     startSettle(async () => {
-      const outcome = await settleAppointment(appointmentId, method);
+      const outcome = await settleAppointment(appointmentId, "CASH");
       if (!outcome.ok) setSettleError(outcome.issues.join(" "));
     });
   }
@@ -898,9 +1233,6 @@ function PaymentSection({
             >
               <span className="w-24 shrink-0 tabular-nums font-medium text-sand-900">
                 {formatPrice(payment.amount)}
-              </span>
-              <span className="shrink-0 text-xs text-sand-500">
-                {PAYMENT_METHOD_LABELS[payment.method]}
               </span>
               {payment.isDeposit ? (
                 <span className="shrink-0 rounded bg-sand-200 px-1.5 py-0.5 text-[11px] text-sand-700">
@@ -951,13 +1283,10 @@ function PaymentSection({
             >
               <path d="m5 13 4 4L19 7" />
             </svg>
-            {isSettling
-              ? "Бүртгэж байна…"
-              : `Төлбөрөө төллөө — ${formatPrice(due)}`}
+            {isSettling ? "Бүртгэж байна…" : `Төлсөн · ${formatPrice(due)}`}
           </button>
           <p className="mt-1.5 text-center text-[11px] text-sand-500">
-            {PAYMENT_METHOD_LABELS[method]}-ээр үлдэгдлийг бүтнээр бүртгэнэ.
-            Хэлбэрийг доороос солино.
+            Үлдэгдлийг бүтнээр төлөгдсөнд тооцно.
           </p>
           {settleError ? (
             <p role="alert" className="mt-2 text-sm text-danger-600">
@@ -969,7 +1298,7 @@ function PaymentSection({
 
       {/* ── Шинэ төлбөр ── */}
       <div className="space-y-2 border-t border-sand-100 pt-3">
-        <div className="flex flex-wrap gap-2">
+        <div className="relative sm:max-w-[13rem]">
           <input
             type="number"
             step={1000}
@@ -977,22 +1306,11 @@ function PaymentSection({
             onChange={(event) => setAmount(event.target.value)}
             placeholder={due > 0 ? String(due) : "0"}
             aria-label="Төлбөрийн дүн"
-            className={`${inputClass} min-w-[7rem] flex-1 text-right`}
+            className={`${inputClass} pr-7 text-right`}
           />
-          <select
-            value={method}
-            onChange={(event) =>
-              setMethod(event.target.value as PaymentMethod)
-            }
-            aria-label="Төлбөрийн хэлбэр"
-            className={`${inputClass} w-32 shrink-0`}
-          >
-            {PAYMENT_METHODS.map((option) => (
-              <option key={option} value={option}>
-                {PAYMENT_METHOD_LABELS[option]}
-              </option>
-            ))}
-          </select>
+          <span className="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-sm text-sand-400">
+            ₮
+          </span>
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-2">

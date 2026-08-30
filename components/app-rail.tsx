@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
@@ -69,6 +70,13 @@ const GearIcon = (
   </svg>
 );
 
+const LogoutIcon = (
+  <svg viewBox="0 0 24 24" className="size-5 shrink-0" aria-hidden {...stroke}>
+    <path d="M15 17v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v2" />
+    <path d="M11 12h10m0 0-3-3m3 3-3 3" />
+  </svg>
+);
+
 const NAV: NavItem[] = [
   { href: "/calendar", label: "Хуанли", icon: CalendarIcon },
   { href: "/clients", label: "Үйлчлүүлэгч", icon: PersonIcon },
@@ -97,45 +105,131 @@ export function AppRail({ user }: { user: CurrentUser }) {
 
   return (
     <>
-      {/* Гар утсанд цэс нээх товч — rail нь тэнд далд байдаг */}
-      {!expanded ? (
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          aria-label="Цэс нээх"
-          className="no-print fixed left-3 top-3 z-30 flex size-10 items-center justify-center rounded-full bg-brand-700 text-white shadow-lg md:hidden"
-        >
-          <svg viewBox="0 0 24 24" className="size-5" aria-hidden {...stroke}>
-            <path d="M4 7h16M4 12h16M4 17h16" />
-          </svg>
-        </button>
-      ) : null}
+      {/* ══ Гар утас ══ Дээд мөр ба түүнээс доош задардаг цэс */}
+      <div className="no-print fixed inset-x-0 top-0 z-40 md:hidden">
+        <header className="flex h-14 items-center gap-2.5 border-b border-sand-200 bg-white px-3">
+          <Image
+            src="/logo.png"
+            alt=""
+            width={72}
+            height={72}
+            priority
+            className="size-9 shrink-0 rounded-full bg-white"
+          />
+          <span className="min-w-0 truncate font-serif text-base text-sand-900">
+            Organic Care
+          </span>
+          <span className="truncate text-xs text-sand-500">
+            {ROLE_LABELS[user.role]}
+          </span>
 
-      {/* Гар утсанд цэс нээлттэй үед арын бүрхүүл */}
-      {expanded ? (
+          <button
+            type="button"
+            onClick={() => setOpen((current) => !current)}
+            aria-label={open ? "Цэс хаах" : "Цэс нээх"}
+            aria-expanded={open}
+            className="ml-auto flex size-10 shrink-0 items-center justify-center rounded-xl text-sand-700 transition active:scale-95 active:bg-sand-100"
+          >
+            <svg viewBox="0 0 24 24" className="size-6" aria-hidden {...stroke}>
+              {open ? (
+                <path d="M6 6l12 12M18 6 6 18" />
+              ) : (
+                <path d="M4 7h16M4 12h16M4 17h16" />
+              )}
+            </svg>
+          </button>
+        </header>
+
+        {/*
+          Задардаг самбар. `max-height`-ээр нээгддэг тул агуулгын өндөр
+          хэдэн ч мөр байсан тааруулж болно; хаалттай үедээ огт зай эзлэхгүй.
+        */}
+        <div
+          /* Хаалттай үед доторх холбоос Tab-аар онилогдохгүй */
+          inert={!open}
+          className={`overflow-hidden bg-white transition-[max-height,opacity] duration-200 ease-out ${
+            open
+              ? "max-h-[calc(100dvh-3.5rem)] border-b border-sand-200 opacity-100 shadow-xl"
+              : "max-h-0 opacity-0"
+          }`}
+        >
+          <nav
+            aria-label="Үндсэн цэс"
+            className="scrollbar-slim max-h-[calc(100dvh-3.5rem)] overflow-y-auto px-3 pb-3 pt-2"
+          >
+            <ul className="space-y-1">
+              {items.map((item) => {
+                const active =
+                  pathname === item.href || pathname.startsWith(`${item.href}/`);
+                return (
+                  <li key={item.href}>
+                    <Link
+                      href={item.href}
+                      aria-current={active ? "page" : undefined}
+                      onClick={() => setOpen(false)}
+                      className={`flex h-12 items-center gap-3 rounded-2xl px-4 text-[15px] transition-colors ${
+                        active
+                          ? "bg-brand-600 font-medium text-white shadow-sm"
+                          : "text-sand-700 active:bg-sand-100"
+                      }`}
+                    >
+                      {item.icon}
+                      {item.label}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+
+            {/* Хэн нэвтэрсэн ба гарах — жагсаалтын сүүлд */}
+            <div className="mt-2 border-t border-sand-200 pt-2">
+              <div className="flex h-12 items-center gap-3 px-2">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-sand-200 text-sm font-medium text-sand-700">
+                  {initial}
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-sm text-sand-900">
+                    {user.name}
+                  </span>
+                  <span className="block truncate text-xs text-sand-500">
+                    {user.phone}
+                  </span>
+                </span>
+              </div>
+
+              <form action={logout}>
+                <button
+                  type="submit"
+                  className="flex h-12 w-full items-center gap-3 rounded-2xl px-4 text-left text-[15px] text-sand-600 transition-colors active:bg-sand-100"
+                >
+                  {LogoutIcon}
+                  Гарах
+                </button>
+              </form>
+            </div>
+          </nav>
+        </div>
+      </div>
+
+      {/* Самбар нээлттэй үед доорх агуулгыг бүдэгрүүлж, дарвал хаана */}
+      {open ? (
         <button
           type="button"
           aria-label="Цэс хаах"
-          onClick={() => {
-            setOpen(false);
-            setMenuOpen(false);
-          }}
-          className="no-print fixed inset-0 z-40 cursor-default bg-sand-900/40 md:hidden"
+          onClick={() => setOpen(false)}
+          className="no-print fixed inset-x-0 bottom-0 top-14 z-30 cursor-default bg-sand-900/30 md:hidden"
         />
       ) : null}
 
-      {/*
-        Компьютерт: урсгал дотор өргөсөж агуулгыг баруун тийш шахна.
-        Гар утсанд: агуулгын дээгүүр гарч ирэх drawer (зай хэмнэнэ).
-      */}
+      {/* ══ Компьютер ══ Зүүн талын нарийн rail */}
       <nav
         aria-label="Үндсэн цэс"
         data-expanded={expanded ? "" : undefined}
-        className={`no-print group fixed inset-y-0 left-0 z-50 flex w-[228px] flex-col overflow-hidden bg-brand-700 py-4 transition-transform duration-200 ease-out md:relative md:z-30 md:shrink-0 md:translate-x-0 md:transition-[width] ${
-          expanded ? "translate-x-0" : "-translate-x-full"
-        } ${expanded ? "md:w-[228px]" : "md:w-[68px]"}`}
+        className={`no-print group relative z-30 hidden shrink-0 flex-col overflow-hidden bg-brand-700 py-4 transition-[width] duration-200 ease-out md:flex ${
+          expanded ? "w-[228px]" : "w-[68px]"
+        }`}
       >
-        {/* Лого дээр дарж цэсийг нээж хаана */}
+        {/* Лого дээр дарж цэсийг дэлгэж хураана */}
         <button
           type="button"
           onClick={() => setOpen((current) => !current)}
@@ -143,15 +237,21 @@ export function AppRail({ user }: { user: CurrentUser }) {
           aria-expanded={expanded}
           className="mb-4 flex h-10 shrink-0 items-center gap-3 pl-[14px] text-left"
         >
-          <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-brand-50 font-serif text-sm text-brand-800 transition hover:brightness-95">
-            OC
-          </span>
+          {/* Лого нь дугуй, буланд нь дэвсгэргүй — ногоон дээр цагаан тэмдэг болж суудаг */}
+          <Image
+            src="/logo.png"
+            alt="Organic Care"
+            width={80}
+            height={80}
+            priority
+            className="size-10 shrink-0 rounded-full bg-white object-cover transition hover:brightness-95"
+          />
           <span className="whitespace-nowrap font-serif text-lg text-brand-50 opacity-0 transition-opacity duration-150 group-data-[expanded]:opacity-100">
             Organic Care
           </span>
         </button>
 
-        <div className="flex flex-1 flex-col gap-0.5">
+        <div className="scrollbar-slim flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overflow-x-hidden">
           {items.map((item) => {
             const active =
               pathname === item.href || pathname.startsWith(`${item.href}/`);
@@ -176,19 +276,19 @@ export function AppRail({ user }: { user: CurrentUser }) {
           })}
         </div>
 
-        {/* Хэрэглэгч */}
+        {/* Хэрэглэгч — дарвал гарах цэс нээгдэнэ */}
         <button
           type="button"
-          onClick={() => setMenuOpen((open) => !open)}
+          onClick={() => setMenuOpen((current) => !current)}
           aria-label={`${user.name} — хэрэглэгчийн цэс`}
           aria-expanded={menuOpen}
-          className="mx-2 flex h-12 shrink-0 items-center gap-3 rounded-xl pl-[6px] transition-colors hover:bg-white/8"
+          className="mx-2 mt-2 flex h-12 shrink-0 items-center gap-3 rounded-xl pl-[6px] transition-colors hover:bg-white/8"
         >
           <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-sand-300 text-sm font-medium text-sand-800">
             {initial}
           </span>
           <span className="min-w-0 text-left opacity-0 transition-opacity duration-150 group-data-[expanded]:opacity-100">
-            <span className="block whitespace-nowrap text-sm text-white">
+            <span className="block truncate whitespace-nowrap text-sm text-white">
               {user.name}
             </span>
             <span className="block whitespace-nowrap text-xs text-white/50">
@@ -198,21 +298,16 @@ export function AppRail({ user }: { user: CurrentUser }) {
         </button>
       </nav>
 
-      {/* Хэрэглэгчийн цэс — nav-ын overflow-д таслагдахгүйн тулд гадна нь */}
+      {/* Хэрэглэгчийн цэс — rail-ийн overflow-д таслагдахгүйн тулд гадна нь */}
       {menuOpen ? (
         <>
           <button
             type="button"
             aria-label="Цэс хаах"
             onClick={() => setMenuOpen(false)}
-            className="no-print fixed inset-0 z-40 cursor-default"
+            className="no-print fixed inset-0 z-40 hidden cursor-default md:block"
           />
-          {/*
-            Гар утсанд rail нь 228px өргөнтэй drawer — цэсийг 236px-т байрлуулбал
-            дэлгэцээс хальдаг. Тиймээс жижиг дэлгэцэд доод талд бүтэн өргөнөөр,
-            md-ээс дээш rail-ийн хажууд гаргана.
-          */}
-          <div className="no-print fixed bottom-4 left-4 right-4 z-50 rounded-xl border border-sand-200 bg-white p-1.5 shadow-xl md:left-[236px] md:right-auto md:w-56">
+          <div className="no-print fixed bottom-4 left-[236px] z-50 hidden w-56 rounded-xl border border-sand-200 bg-white p-1.5 shadow-xl md:block">
             <div className="border-b border-sand-100 px-2.5 py-2">
               <p className="truncate text-sm font-medium text-sand-900">
                 {user.name}

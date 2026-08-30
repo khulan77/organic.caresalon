@@ -10,6 +10,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { resolveBooking, validateSlot } from "@/lib/appointments";
 import { searchClients } from "@/lib/queries";
+import { trimOldClients } from "@/lib/clients";
 import { isDateKey, localToUtc } from "@/lib/time";
 import type { ActionResult } from "@/lib/action-result";
 import type {
@@ -266,8 +267,12 @@ export async function createAppointment(
                     create: {
                       amount: deposit.amount,
                       method: deposit.method,
-                      isDeposit: true,
-                      note: "Захиалгын урьдчилгаа",
+                      // Бүтэн дүнг төлсөн бол энэ нь урьдчилгаа биш
+                      isDeposit: deposit.amount < resolved.totalPrice,
+                      note:
+                        deposit.amount < resolved.totalPrice
+                          ? "Захиалгын урьдчилгаа"
+                          : "Бүрэн төлөлт",
                       receivedById: user.id,
                     },
                   }
@@ -282,6 +287,9 @@ export async function createAppointment(
     }
     throw error;
   }
+
+  // Захиалгаар шинэ хүн бүртгэгдсэн байж болзошгүй — жагсаалтыг 30-д барина
+  await trimOldClients(client.id);
 
   refresh();
   return { ok: true };

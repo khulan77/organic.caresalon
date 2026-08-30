@@ -9,33 +9,52 @@ import { PageHeader } from "@/components/page-header";
 
 type BranchOption = { id: string; name: string };
 
-/** 545 → "9.1ц". Excel рүү хуулахад тохиромжтой аравтын бутархай. */
+/** 545 → "9.1". Excel рүү хуулахад тохиромжтой аравтын бутархай. */
 function hours(minutes: number): string {
   return (Math.round((minutes / 60) * 10) / 10).toFixed(1);
 }
 
-/** Нүдний товч тэмдэглэгээ ба өнгө. */
+/** Нүдэнд багтах богино хэлбэр: 120 → "2", 90 → "1.5". */
+function shortHours(minutes: number): string {
+  return String(Math.round((minutes / 60) * 10) / 10);
+}
+
+/**
+ * Нүдний тэмдэглэгээ ба өнгө.
+ *
+ * Бүртгэл нь ЦАГААР биш ӨДРӨӨР бодогдоно: бүтэн ажилласан өдөр = ногоон ✓.
+ * Амралтын өдөр шар, чөлөө авсан өдөр улаан. Цагийн чөлөө авсан өдөр бол
+ * ✓ БИШ — авсан цагаа улаан нүдэнд шууд бичнэ (жишээ нь «−2ц»).
+ */
 const CELL_STYLE: Record<
   TimesheetCell["state"],
   { short: string; className: string; label: string }
 > = {
-  WORK: { short: "", className: "text-sand-900", label: "Ажилласан" },
+  WORK: {
+    short: "✓",
+    className: "bg-ok-200 text-ok-700",
+    label: "Ажилласан",
+  },
   DAY_OFF: {
     short: "А",
-    className: "bg-sand-100 text-sand-400",
+    className: "bg-warn-200 text-warn-700",
     label: "Амралт",
   },
   ABSENT: {
-    short: "И",
-    className: "bg-warn-50 text-warn-600",
-    label: "Ирээгүй",
+    short: "Ч",
+    className: "bg-danger-200 text-danger-700",
+    label: "Бүтэн өдрийн чөлөө",
   },
   CLOSED: {
+    // Салоны хаалт нь ажилтны буруу биш — саарлаар, төлөвийн өнгө эзлэхгүй
     short: "Х",
-    className: "bg-danger-50 text-danger-600",
+    className: "bg-sand-200 text-sand-500",
     label: "Салбар хаалттай",
   },
 };
+
+/** Цагийн чөлөө авсан өдөр — улаанаар, авсан цаг нь дотроо. */
+const PARTIAL_CLASS = "bg-danger-50 text-danger-700 ring-1 ring-danger-200";
 
 /** Өмнөх / дараагийн сар. */
 function shiftMonth(monthKey: string, amount: number): string {
@@ -74,13 +93,52 @@ export function TimesheetView({
   const days = rows[0]?.cells.map((cell) => cell.dateKey) ?? [];
   const [year, month] = optimistic.monthKey.split("-").map(Number);
 
-  const totalMinutes = rows.reduce((sum, row) => sum + row.totals.minutes, 0);
+  /**
+   * Ажилтан бүрийн БҮТЭН ажилласан өдөр ба цагийн чөлөөтэй өдөр.
+   * Чөлөө авсан өдрийг бүтэн өдөрт тоолохгүй — тусад нь харуулна.
+   */
+  const dayCount = new Map<string, { full: number; partial: number }>(
+    rows.map((row) => [
+      row.staffId,
+      {
+        full: row.cells.filter(
+          (cell) => cell.state === "WORK" && cell.offMinutes === 0,
+        ).length,
+        partial: row.cells.filter(
+          (cell) => cell.state === "WORK" && cell.offMinutes > 0,
+        ).length,
+      },
+    ]),
+  );
+
+  const totalFullDays = [...dayCount.values()].reduce(
+    (sum, entry) => sum + entry.full,
+    0,
+  );
+  const totalPartialDays = [...dayCount.values()].reduce(
+    (sum, entry) => sum + entry.partial,
+    0,
+  );
+
+  /** Ажилтан бүрийн чөлөө авсан өдрүүд — хүснэгтийн доор жагсаана. */
+  const leaveRows = rows
+    .map((row) => ({
+      row,
+      leaves: row.cells.filter(
+        (cell) =>
+          cell.state === "ABSENT" ||
+          (cell.state === "WORK" && cell.offMinutes > 0),
+      ),
+    }))
+    .filter((entry) => entry.leaves.length > 0);
 
   return (
     <>
       <PageHeader
         title="Цагийн бүртгэл"
-        subtitle={`${year} оны ${MONTHS[month - 1]} · нийт ${hours(totalMinutes)} цаг`}
+        subtitle={`${year} оны ${MONTHS[month - 1]} · ${totalFullDays} бүтэн өдөр${
+          totalPartialDays > 0 ? ` · ${totalPartialDays} өдөр цагийн чөлөөтэй` : ""
+        }`}
         action={
           <button
             type="button"
@@ -151,17 +209,22 @@ export function TimesheetView({
             <span key={state} className="flex items-center gap-1.5">
               <span
                 aria-hidden
-                className={`flex size-4 items-center justify-center rounded text-[10px] font-semibold ${
-                  state === "WORK"
-                    ? "bg-white ring-1 ring-sand-300"
-                    : CELL_STYLE[state].className
-                }`}
+                className={`flex size-4 items-center justify-center rounded text-[10px] font-semibold ${CELL_STYLE[state].className}`}
               >
-                {CELL_STYLE[state].short || "ц"}
+                {CELL_STYLE[state].short}
               </span>
               {CELL_STYLE[state].label}
             </span>
           ))}
+          <span className="flex items-center gap-1.5">
+            <span
+              aria-hidden
+              className={`flex h-4 items-center justify-center rounded px-1 text-[9px] font-semibold ${PARTIAL_CLASS}`}
+            >
+              −2ц
+            </span>
+            Цагийн чөлөө авсан
+          </span>
         </div>
       </div>
 
@@ -230,19 +293,21 @@ export function TimesheetView({
                         <td
                           key={cell.dateKey}
                           title={describeCell(cell)}
-                          className={`border-b border-sand-100 px-1 py-2 text-center text-[11px] tabular-nums ${style.className}`}
+                          className="border-b border-sand-100 px-1 py-1.5 text-center"
                         >
-                          {cell.state === "WORK" ? (
+                          {partial ? (
+                            /* Цагийн чөлөө — авсан цаг нь нүдэн дотроо */
                             <span
-                              className={
-                                partial ? "font-semibold text-warn-600" : ""
-                              }
+                              className={`mx-auto flex h-7 min-w-7 items-center justify-center rounded-lg px-1 text-[10px] font-semibold tabular-nums ${PARTIAL_CLASS}`}
                             >
-                              {hours(cell.minutes)}
-                              {partial ? "*" : ""}
+                              −{shortHours(cell.offMinutes)}ц
                             </span>
                           ) : (
-                            style.short
+                            <span
+                              className={`mx-auto flex size-7 items-center justify-center rounded-lg text-xs font-semibold ${style.className}`}
+                            >
+                              {style.short}
+                            </span>
                           )}
                         </td>
                       );
@@ -250,17 +315,24 @@ export function TimesheetView({
 
                     <td className="sticky right-0 z-10 border-b border-l border-sand-100 bg-white px-3 py-2 text-right">
                       <span className="block whitespace-nowrap font-semibold tabular-nums text-sand-900">
-                        {hours(row.totals.minutes)} ц
+                        {dayCount.get(row.staffId)?.full ?? 0} өдөр
                       </span>
-                      <span className="block whitespace-nowrap text-xs text-sand-500">
-                        {row.totals.workedDays} өдөр
-                        {row.totals.absentDays > 0
-                          ? ` · ${row.totals.absentDays} ирээгүй`
-                          : ""}
-                        {row.totals.offMinutes > 0
-                          ? ` · ${hours(row.totals.offMinutes)}ц чөлөө`
-                          : ""}
-                      </span>
+                      {/* Чөлөөтэй өдөр байвал л нэмж бичнэ */}
+                      {(dayCount.get(row.staffId)?.partial ?? 0) > 0 ||
+                      row.totals.absentDays > 0 ? (
+                        <span className="block whitespace-nowrap text-xs text-danger-600">
+                          {[
+                            (dayCount.get(row.staffId)?.partial ?? 0) > 0
+                              ? `${dayCount.get(row.staffId)?.partial} цагийн чөлөө`
+                              : null,
+                            row.totals.absentDays > 0
+                              ? `${row.totals.absentDays} бүтэн чөлөө`
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
+                      ) : null}
                     </td>
                   </tr>
                 ))}
@@ -270,10 +342,73 @@ export function TimesheetView({
         )}
 
         <p className="mt-3 text-xs text-sand-500">
-          Цагийг ажилтны долоо хоногийн хуваариас чөлөө, салбарын хаалтыг хасаж
-          бодно. <span className="font-semibold text-warn-600">*</span> нь тухайн
-          өдөр хэсэгчилсэн чөлөө авсныг заана (жишээ нь 2 цагийн чөлөө).
+          «Өдөр» гэдэг нь ЦАГИЙН ЧӨЛӨӨГҮЙ бүтэн ажилласан өдөр. Цагийн чөлөө
+          авсан өдөр тусдаа тоологдож, авсан цаг нь нүдэн дээрээ бичигдэнэ.
+          Долоо хоногийн амралт, салбарын хаалттай өдөр тоонд орохгүй.
         </p>
+
+        {/* ── Чөлөө авсан өдрүүд ── */}
+        {leaveRows.length > 0 ? (
+          <section className="mt-5">
+            <h2 className="mb-2 text-sm font-semibold text-sand-800">
+              Чөлөө авсан өдрүүд
+            </h2>
+            <ul className="divide-y divide-sand-100 overflow-hidden rounded-2xl border border-sand-200 bg-white">
+              {leaveRows.map(({ row, leaves }) => (
+                <li
+                  key={row.staffId}
+                  className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-start sm:gap-4"
+                >
+                  <span className="flex shrink-0 items-center gap-2 sm:w-44">
+                    <span
+                      aria-hidden
+                      className="size-2 shrink-0 rounded-full"
+                      style={{ backgroundColor: row.color }}
+                    />
+                    <span className="truncate font-medium text-sand-900">
+                      {row.name}
+                    </span>
+                    <span className="shrink-0 text-xs text-sand-400">
+                      {leaves.length}
+                    </span>
+                  </span>
+
+                  <span className="flex min-w-0 flex-wrap gap-1.5">
+                    {leaves.map((cell) => {
+                      const day = Number(cell.dateKey.slice(8));
+                      const full = cell.state === "ABSENT";
+                      return (
+                        <span
+                          key={cell.dateKey}
+                          className={`inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs ${
+                            full
+                              ? "bg-danger-200 text-danger-700"
+                              : "bg-danger-50 text-danger-700"
+                          }`}
+                        >
+                          <span className="font-medium tabular-nums">
+                            {month}/{day}
+                          </span>
+                          <span className="text-danger-600/80">
+                            {WEEKDAYS_SHORT[weekdayOf(cell.dateKey)]}
+                          </span>
+                          <span>
+                            {full ? "бүтэн өдөр" : `${hours(cell.offMinutes)} цаг`}
+                          </span>
+                          {cell.note ? (
+                            <span className="truncate text-danger-600/80">
+                              · {cell.note}
+                            </span>
+                          ) : null}
+                        </span>
+                      );
+                    })}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
       </div>
     </>
   );
@@ -282,10 +417,10 @@ export function TimesheetView({
 function describeCell(cell: TimesheetCell): string {
   const style = CELL_STYLE[cell.state];
   if (cell.state === "WORK") {
-    const base = `${hours(cell.minutes)} цаг ажилласан`;
-    return cell.offMinutes > 0
-      ? `${base} · ${hours(cell.offMinutes)} цагийн чөлөө${cell.note ? ` (${cell.note})` : ""}`
-      : base;
+    if (cell.offMinutes === 0) return "Ажилласан өдөр";
+    return `Ажилласан өдөр · ${hours(cell.offMinutes)} цагийн чөлөө${
+      cell.note ? ` (${cell.note})` : ""
+    }`;
   }
   return cell.note ? `${style.label} — ${cell.note}` : style.label;
 }
@@ -302,23 +437,37 @@ function downloadCsv(
     "Ажилтан",
     "Салбар",
     ...days.map((dateKey) => String(Number(dateKey.slice(8)))),
-    "Нийт цаг",
-    "Ажилласан өдөр",
-    "Ирээгүй",
-    "Чөлөө (цаг)",
+    "Бүтэн өдөр",
+    "Цагийн чөлөөтэй өдөр",
+    "Бүтэн чөлөө",
+    "Амарсан өдөр",
+    "Цагийн чөлөө (цаг)",
   ];
 
-  const body = rows.map((row) => [
-    row.name,
-    row.branchName,
-    ...row.cells.map((cell) =>
-      cell.state === "WORK" ? hours(cell.minutes) : CELL_STYLE[cell.state].short,
-    ),
-    hours(row.totals.minutes),
-    String(row.totals.workedDays),
-    String(row.totals.absentDays),
-    hours(row.totals.offMinutes),
-  ]);
+  // Бүтэн ажилласан өдөр = 1 (Excel дээр мөрөө шууд нийлүүлнэ),
+  // цагийн чөлөөтэй өдөр «−2ц», бусад нь үсгээр
+  const body = rows.map((row) => {
+    const full = row.cells.filter(
+      (cell) => cell.state === "WORK" && cell.offMinutes === 0,
+    ).length;
+    const partial = row.cells.filter(
+      (cell) => cell.state === "WORK" && cell.offMinutes > 0,
+    ).length;
+
+    return [
+      row.name,
+      row.branchName,
+      ...row.cells.map((cell) => {
+        if (cell.state !== "WORK") return CELL_STYLE[cell.state].short;
+        return cell.offMinutes > 0 ? `−${shortHours(cell.offMinutes)}ц` : "1";
+      }),
+      String(full),
+      String(partial),
+      String(row.totals.absentDays),
+      String(row.totals.dayOffDays),
+      hours(row.totals.offMinutes),
+    ];
+  });
 
   // BOM — Excel кирилл үсгийг зөв уншихад заавал хэрэгтэй
   const csv =

@@ -84,62 +84,73 @@ export function ReportFilters({
   }
 
   return (
-    <div className="no-print flex flex-wrap items-end gap-x-3 gap-y-3 border-b border-sand-200 bg-sand-50 px-4 py-3 md:px-6">
-      <div className="flex shrink-0 items-center gap-1 rounded-full bg-sand-200/70 p-1">
-        {PRESETS.map((preset) => {
-          const [presetFrom, presetTo] = preset.range();
-          const active =
-            optimistic.fromKey === presetFrom && optimistic.toKey === presetTo;
-          return (
-            <button
-              key={preset.key}
-              type="button"
-              onClick={() => navigate({ fromKey: presetFrom, toKey: presetTo })}
-              aria-current={active ? "true" : undefined}
-              className={`whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm transition ${
-                active
-                  ? "bg-white font-medium text-sand-900 shadow-sm"
-                  : "text-sand-500 hover:text-sand-800"
-              }`}
-            >
-              {preset.label}
-            </button>
-          );
-        })}
+    /*
+      Гар утсанд: түргэн сонголтууд хажуу тийш гүйнэ, огноо хоёулаа нэг мөрөнд
+      хагас хагасаараа, салбар нь доор бүтэн өргөнөөр.
+      md-ээс дээш: бүгд нэг мөрөнд эгнэнэ — `md:contents` нь боодлыг арилгана.
+    */
+    <div className="no-print flex flex-col gap-3 border-b border-sand-200 bg-sand-50 px-4 py-3 md:flex-row md:flex-wrap md:items-end md:gap-x-3 md:px-6">
+      {/* Түргэн сонголтууд — нарийхан дэлгэцэд хажуу тийш гүйнэ */}
+      <div className="scrollbar-slim -mx-4 overflow-x-auto px-4 md:mx-0 md:overflow-visible md:px-0">
+        <div className="flex w-max items-center gap-1 rounded-full bg-sand-200/70 p-1">
+          {PRESETS.map((preset) => {
+            const [presetFrom, presetTo] = preset.range();
+            const active =
+              optimistic.fromKey === presetFrom && optimistic.toKey === presetTo;
+            return (
+              <button
+                key={preset.key}
+                type="button"
+                onClick={() => navigate({ fromKey: presetFrom, toKey: presetTo })}
+                aria-current={active ? "true" : undefined}
+                className={`whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm transition ${
+                  active
+                    ? "bg-white font-medium text-sand-900 shadow-sm"
+                    : "text-sand-500 hover:text-sand-800"
+                }`}
+              >
+                {preset.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      <label className="block">
-        <span className="mb-1 block text-xs text-sand-500">Эхлэх</span>
-        <input
-          type="date"
-          value={optimistic.fromKey}
-          max={optimistic.toKey}
-          onChange={(event) => {
-            if (event.target.value) navigate({ fromKey: event.target.value });
-          }}
-          className={`${inputClass} w-auto`}
-        />
-      </label>
+      {/* Хоёр огноо — гар утсанд хагас хагасаараа зэрэгцэнэ */}
+      <div className="grid grid-cols-2 gap-3 md:contents">
+        <label className="block">
+          <span className="mb-1 block text-xs text-sand-500">Эхлэх</span>
+          <input
+            type="date"
+            value={optimistic.fromKey}
+            max={optimistic.toKey}
+            onChange={(event) => {
+              if (event.target.value) navigate({ fromKey: event.target.value });
+            }}
+            className={`${inputClass} md:w-auto`}
+          />
+        </label>
 
-      <label className="block">
-        <span className="mb-1 block text-xs text-sand-500">Дуусах</span>
-        <input
-          type="date"
-          value={optimistic.toKey}
-          min={optimistic.fromKey}
-          onChange={(event) => {
-            if (event.target.value) navigate({ toKey: event.target.value });
-          }}
-          className={`${inputClass} w-auto`}
-        />
-      </label>
+        <label className="block">
+          <span className="mb-1 block text-xs text-sand-500">Дуусах</span>
+          <input
+            type="date"
+            value={optimistic.toKey}
+            min={optimistic.fromKey}
+            onChange={(event) => {
+              if (event.target.value) navigate({ toKey: event.target.value });
+            }}
+            className={`${inputClass} md:w-auto`}
+          />
+        </label>
+      </div>
 
       <label className="block">
         <span className="mb-1 block text-xs text-sand-500">Салбар</span>
         <select
           value={optimistic.branchId}
           onChange={(event) => navigate({ branchId: event.target.value })}
-          className={`${inputClass} w-auto`}
+          className={`${inputClass} md:w-auto`}
         >
           <option value="all">Бүх салбар</option>
           {branches.map((branch) => (
