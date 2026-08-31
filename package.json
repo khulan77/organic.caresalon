@@ -14,6 +14,7 @@
     "db:clear": "tsx prisma/clear-demo.ts",
     "db:studio": "prisma studio",
     "db:generate": "prisma generate",
+    "db:check": "prisma migrate status && prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code",
     "verify": "NODE_OPTIONS=--conditions=react-server tsx prisma/verify-validation.mts",
     "postinstall": "prisma generate",
     "vercel-build": "node scripts/check-env.mjs && prisma migrate deploy && next build"
