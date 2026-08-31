@@ -1,7 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
-import { addDays, weekdayOf, type DateKey } from "@/lib/time";
+import { addDays, todayKey, weekdayOf, type DateKey } from "@/lib/time";
 
 /**
  * Ажилчдын цагийн бүртгэл — Excel-ийн хүснэгт шиг «ажилтан × өдөр» тор.
@@ -13,9 +13,13 @@ import { addDays, weekdayOf, type DateKey } from "@/lib/time";
  *
  * Жишээ: 10:00–19:00 хуваарьтай ажилтан 2 цагийн чөлөө авбал 7 цаг гарна.
  * Бүтэн өдрийн чөлөө бол «Ирээгүй» гэж тэмдэглэгдэнэ.
+ *
+ * ӨНӨӨДРӨӨС ХОЙШХ ажлын өдөр нь зөвхөн ХУВААРЬ болохоос ажилласан баримт биш.
+ * Тиймээс `FUTURE` төлөвтэй гарч, ажилласан өдөрт тоологдохгүй — эс тэгвээс
+ * ирэх сарыг харахад бүх өдөр «ажилласан» гэж харагдах байсан.
  */
 
-export type DayState = "WORK" | "DAY_OFF" | "ABSENT" | "CLOSED";
+export type DayState = "WORK" | "DAY_OFF" | "ABSENT" | "CLOSED" | "FUTURE";
 
 export type TimesheetCell = {
   dateKey: DateKey;
@@ -83,6 +87,8 @@ export async function getTimesheet(input: {
 }): Promise<TimesheetRow[]> {
   const days = monthDays(input.monthKey);
   if (days.length === 0) return [];
+
+  const today = todayKey();
 
   const from = new Date(`${days[0]}T00:00:00.000Z`);
   const to = new Date(`${days[days.length - 1]}T00:00:00.000Z`);
@@ -182,6 +188,18 @@ export async function getTimesheet(input: {
       }, 0);
 
       const minutes = Math.max(0, scheduledMinutes - offMinutes);
+
+      // Ирээдүйн ажлын өдөр — хараахан ажиллаагүй, зөвхөн хуваарь
+      if (dateKey > today) {
+        return {
+          dateKey,
+          state: "FUTURE",
+          minutes: 0,
+          scheduledMinutes,
+          offMinutes: 0,
+          note: reason,
+        };
+      }
 
       return {
         dateKey,

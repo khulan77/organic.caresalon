@@ -11,7 +11,6 @@ const VIEWS = [
   { value: 30, label: "30 хоног", short: "30х" },
 ];
 
-/** Хуанлийн толгойн доорх хураангуй мөр ба харагдацын сонголт. */
 export function CalendarStats({
   items,
   view,
@@ -36,7 +35,6 @@ export function CalendarStats({
 
   return (
     <div className="no-print flex items-center gap-x-5 border-y border-sand-200 bg-sand-50 px-4 py-2.5 md:gap-x-8 md:px-6 md:py-3">
-      {/* Гар утсанд мөр таслахын оронд хэвтээ гүйлгэнэ — өндөр хэмнэнэ */}
       <div className="scrollbar-slim flex min-w-0 flex-1 items-center gap-x-5 overflow-x-auto md:gap-x-8">
         {items.map((item) => (
           <p

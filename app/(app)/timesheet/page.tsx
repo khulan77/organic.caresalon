@@ -14,6 +14,9 @@ export default async function TimesheetPage(props: PageProps<"/timesheet">) {
     ? params.month
     : monthOf(todayKey());
 
+  // Цалин 15 хоногоор олгогддог тул сарыг хагасаар нь харж болно
+  const half = params.half === "1" || params.half === "2" ? params.half : null;
+
   const requested = typeof params.branch === "string" ? params.branch : "";
   const branches = await getBranches();
   const branchId = branches.some((b) => b.id === requested) ? requested : null;
@@ -24,6 +27,7 @@ export default async function TimesheetPage(props: PageProps<"/timesheet">) {
     <TimesheetView
       monthKey={monthKey}
       branchId={branchId}
+      half={half}
       branches={branches.map((branch) => ({ id: branch.id, name: branch.name }))}
       rows={rows}
     />

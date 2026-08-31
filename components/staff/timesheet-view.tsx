@@ -51,10 +51,47 @@ const CELL_STYLE: Record<
     className: "bg-sand-200 text-sand-500",
     label: "Салбар хаалттай",
   },
+  FUTURE: {
+    // Хуваариар ажлын өдөр боловч хараахан болоогүй — сул саарал
+    short: "·",
+    className: "bg-sand-50 text-sand-300",
+    label: "Ирээгүй өдөр",
+  },
 };
 
 /** Цагийн чөлөө авсан өдөр — улаанаар, авсан цаг нь дотроо. */
 const PARTIAL_CLASS = "bg-danger-50 text-danger-700 ring-1 ring-danger-200";
+
+/**
+ * Цалин 15 хоногоор олгогддог тул сарыг хоёр хуваана.
+ * `"1"` = 1–15, `"2"` = 16-аас сарын эцэс, `null` = бүтэн сар.
+ */
+export type Half = "1" | "2" | null;
+
+/** Тухайн өдөр сонгосон хугацаанд багтаж байна уу. */
+function inHalf(dateKey: string, half: Half): boolean {
+  if (half === null) return true;
+  const day = Number(dateKey.slice(8));
+  return half === "1" ? day <= 15 : day > 15;
+}
+
+type Stat = {
+  full: number;
+  partial: number;
+  absent: number;
+  /** Хуваариар ажиллах ёстой боловч хараахан болоогүй өдөр */
+  planned: number;
+};
+
+/** Сонгосон хугацааны нүднүүдээс ажилтны дүн. */
+function statOf(cells: TimesheetCell[]): Stat {
+  return {
+    full: cells.filter((c) => c.state === "WORK" && c.offMinutes === 0).length,
+    partial: cells.filter((c) => c.state === "WORK" && c.offMinutes > 0).length,
+    absent: cells.filter((c) => c.state === "ABSENT").length,
+    planned: cells.filter((c) => c.state === "FUTURE").length,
+  };
+}
 
 /** Өмнөх / дараагийн сар. */
 function shiftMonth(monthKey: string, amount: number): string {
@@ -66,17 +103,23 @@ function shiftMonth(monthKey: string, amount: number): string {
 export function TimesheetView({
   monthKey,
   branchId,
+  half,
   branches,
   rows,
 }: {
   monthKey: string;
   branchId: string | null;
+  half: Half;
   branches: BranchOption[];
   rows: TimesheetRow[];
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [optimistic, setOptimistic] = useOptimistic({ monthKey, branchId });
+  const [optimistic, setOptimistic] = useOptimistic({
+    monthKey,
+    branchId,
+    half,
+  });
 
   function navigate(next: Partial<typeof optimistic>) {
     const merged = { ...optimistic, ...next };
@@ -86,42 +129,52 @@ export function TimesheetView({
       params.set("month", merged.monthKey);
       if (merged.branchId) params.set("branch", merged.branchId);
       else params.delete("branch");
+      if (merged.half) params.set("half", merged.half);
+      else params.delete("half");
       router.push(`/timesheet?${params.toString()}`);
     });
   }
 
-  const days = rows[0]?.cells.map((cell) => cell.dateKey) ?? [];
   const [year, month] = optimistic.monthKey.split("-").map(Number);
+  const monthLength = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const mm = String(month).padStart(2, "0");
+
+  /** Цалингийн хагас сар — сонгосон хугацаанд багтах өдрүүд л үлдэнэ. */
+  const viewRows = rows.map((row) => ({
+    ...row,
+    cells: row.cells.filter((cell) => inHalf(cell.dateKey, optimistic.half)),
+  }));
+
+  const days = viewRows[0]?.cells.map((cell) => cell.dateKey) ?? [];
+
+  /** Тайлангийн хамрах хугацаа: «2026.08.01 – 08.15». */
+  const firstDay = optimistic.half === "2" ? 16 : 1;
+  const lastDay = optimistic.half === "1" ? 15 : monthLength;
+  const rangeLabel = `${year}.${mm}.${String(firstDay).padStart(2, "0")} – ${mm}.${lastDay}`;
 
   /**
-   * Ажилтан бүрийн БҮТЭН ажилласан өдөр ба цагийн чөлөөтэй өдөр.
+   * Ажилтан бүрийн БҮТЭН ажилласан өдөр, цагийн чөлөөтэй өдөр, бүтэн чөлөө.
    * Чөлөө авсан өдрийг бүтэн өдөрт тоолохгүй — тусад нь харуулна.
    */
-  const dayCount = new Map<string, { full: number; partial: number }>(
-    rows.map((row) => [
-      row.staffId,
-      {
-        full: row.cells.filter(
-          (cell) => cell.state === "WORK" && cell.offMinutes === 0,
-        ).length,
-        partial: row.cells.filter(
-          (cell) => cell.state === "WORK" && cell.offMinutes > 0,
-        ).length,
-      },
-    ]),
+  const stats = new Map<string, Stat>(
+    viewRows.map((row) => [row.staffId, statOf(row.cells)]),
+  );
+  const statOfRow = (staffId: string): Stat =>
+    stats.get(staffId) ?? { full: 0, partial: 0, absent: 0, planned: 0 };
+
+  /** Ирээгүй өдөр байвал л тайлбарт нэмнэ — өнгөрсөн сард хэрэггүй. */
+  const hasFuture = viewRows.some((row) =>
+    row.cells.some((cell) => cell.state === "FUTURE"),
   );
 
-  const totalFullDays = [...dayCount.values()].reduce(
-    (sum, entry) => sum + entry.full,
-    0,
-  );
-  const totalPartialDays = [...dayCount.values()].reduce(
-    (sum, entry) => sum + entry.partial,
+  const totalFullDays = [...stats.values()].reduce((sum, s) => sum + s.full, 0);
+  const totalPartialDays = [...stats.values()].reduce(
+    (sum, s) => sum + s.partial,
     0,
   );
 
   /** Ажилтан бүрийн чөлөө авсан өдрүүд — хүснэгтийн доор жагсаана. */
-  const leaveRows = rows
+  const leaveRows = viewRows
     .map((row) => ({
       row,
       leaves: row.cells.filter(
@@ -136,13 +189,15 @@ export function TimesheetView({
     <>
       <PageHeader
         title="Цагийн бүртгэл"
-        subtitle={`${year} оны ${MONTHS[month - 1]} · ${totalFullDays} бүтэн өдөр${
-          totalPartialDays > 0 ? ` · ${totalPartialDays} өдөр цагийн чөлөөтэй` : ""
+        subtitle={`${rangeLabel} · ${totalFullDays} бүтэн өдөр${
+          totalPartialDays > 0 ? ` · ${totalPartialDays} чөлөөтэй` : ""
         }`}
         action={
           <button
             type="button"
-            onClick={() => downloadCsv(optimistic.monthKey, days, rows)}
+            onClick={() =>
+              downloadCsv(optimistic.monthKey, optimistic.half, days, viewRows)
+            }
             disabled={rows.length === 0}
             className="shrink-0 rounded-xl border border-sand-300 bg-white px-3.5 py-2 text-sm font-medium text-sand-700 transition hover:bg-sand-100 disabled:opacity-50"
           >
@@ -152,89 +207,114 @@ export function TimesheetView({
       />
 
       {/* ── Сар ба салбар сонгох ── */}
-      <div className="scrollbar-slim flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-sand-200 bg-sand-50 px-4 py-2.5 md:px-6">
-        <div className="flex shrink-0 items-center gap-1">
-          <MonthArrow
-            direction="prev"
-            onClick={() =>
-              navigate({ monthKey: shiftMonth(optimistic.monthKey, -1) })
-            }
-          />
-          <label className="relative cursor-pointer px-2">
-            <span className="whitespace-nowrap font-mono text-sm tabular-nums text-sand-900">
-              {optimistic.monthKey}
-            </span>
-            <input
-              type="month"
-              value={optimistic.monthKey}
-              onChange={(event) => {
-                if (event.target.value) navigate({ monthKey: event.target.value });
-              }}
-              aria-label="Сар сонгох"
-              className="absolute inset-0 cursor-pointer opacity-0"
+      <div className="shrink-0 border-b border-sand-200 bg-sand-50 px-3 py-2 md:px-6 md:py-2.5">
+        <div className="flex flex-col gap-1.5 md:flex-row md:flex-wrap md:items-center md:gap-x-3 md:gap-y-2">
+          <div className="flex w-full shrink-0 items-center justify-between gap-1 md:w-auto md:justify-start">
+            <MonthArrow
+              direction="prev"
+              onClick={() =>
+                navigate({ monthKey: shiftMonth(optimistic.monthKey, -1) })
+              }
             />
-          </label>
-          <MonthArrow
-            direction="next"
-            onClick={() =>
-              navigate({ monthKey: shiftMonth(optimistic.monthKey, 1) })
-            }
-          />
-        </div>
-
-        {branches.length > 1 ? (
-          <div className="flex shrink-0 items-center gap-1 rounded-full bg-sand-200/70 p-1">
-            <Pill
-              active={optimistic.branchId === null}
-              onClick={() => navigate({ branchId: null })}
-            >
-              Бүх салбар
-            </Pill>
-            {branches.map((branch) => (
-              <Pill
-                key={branch.id}
-                active={optimistic.branchId === branch.id}
-                onClick={() => navigate({ branchId: branch.id })}
-              >
-                {branch.name}
-              </Pill>
-            ))}
-          </div>
-        ) : null}
-
-        <div className="flex-1" />
-
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-sand-500">
-          {(["WORK", "DAY_OFF", "ABSENT", "CLOSED"] as const).map((state) => (
-            <span key={state} className="flex items-center gap-1.5">
-              <span
-                aria-hidden
-                className={`flex size-4 items-center justify-center rounded text-[10px] font-semibold ${CELL_STYLE[state].className}`}
-              >
-                {CELL_STYLE[state].short}
+            <label className="relative flex cursor-pointer flex-col items-center px-2 leading-tight">
+              <span className="whitespace-nowrap text-sm font-medium text-sand-900">
+                {year} оны {MONTHS[month - 1]}
               </span>
-              {CELL_STYLE[state].label}
-            </span>
-          ))}
-          <span className="flex items-center gap-1.5">
-            <span
-              aria-hidden
-              className={`flex h-4 items-center justify-center rounded px-1 text-[9px] font-semibold ${PARTIAL_CLASS}`}
-            >
-              −2ц
-            </span>
-            Цагийн чөлөө авсан
-          </span>
+              <span className="whitespace-nowrap font-mono text-[11px] tabular-nums text-sand-500">
+                {rangeLabel}
+              </span>
+              <input
+                type="month"
+                value={optimistic.monthKey}
+                onChange={(event) => {
+                  if (event.target.value)
+                    navigate({ monthKey: event.target.value });
+                }}
+                aria-label="Сар сонгох"
+                className="absolute inset-0 cursor-pointer opacity-0"
+              />
+            </label>
+            <MonthArrow
+              direction="next"
+              onClick={() =>
+                navigate({ monthKey: shiftMonth(optimistic.monthKey, 1) })
+              }
+            />
+          </div>
+
+          {/* Утсанд хоёр бүлэг нэг мөрөнд хэвтээ гүйнэ, дэлгэцэнд салж байрлана */}
+          <div className="scrollbar-slim -mx-3 flex gap-2 overflow-x-auto px-3 md:mx-0 md:contents md:overflow-visible md:px-0">
+            {/* Цалин 15 хоногоор олгогддог тул хагас сараар шүүнэ */}
+            <div className="inline-flex shrink-0 items-center gap-1 rounded-full bg-sand-200/70 p-1">
+              {(
+                [
+                  [null, "Бүтэн сар"],
+                  ["1", "1–15"],
+                  ["2", `16–${monthLength}`],
+                ] as const
+              ).map(([value, label]) => (
+                <Pill
+                  key={label}
+                  active={optimistic.half === value}
+                  onClick={() => navigate({ half: value })}
+                >
+                  {label}
+                </Pill>
+              ))}
+            </div>
+
+            {branches.length > 1 ? (
+              <div className="inline-flex shrink-0 items-center gap-1 rounded-full bg-sand-200/70 p-1">
+                <Pill
+                  active={optimistic.branchId === null}
+                  onClick={() => navigate({ branchId: null })}
+                >
+                  Бүх салбар
+                </Pill>
+                {branches.map((branch) => (
+                  <Pill
+                    key={branch.id}
+                    active={optimistic.branchId === branch.id}
+                    onClick={() => navigate({ branchId: branch.id })}
+                  >
+                    {branch.name}
+                  </Pill>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="hidden flex-1 md:block" />
+
+          {/* Утсанд толгойг цэвэрхэн байлгахаар тайлбарыг доор нь буулгав */}
+          <Legend
+            hasFuture={hasFuture}
+            className="hidden md:flex md:flex-wrap md:items-center md:gap-x-3 md:gap-y-1"
+          />
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto scrollbar-slim p-4 md:p-6">
+      <div className="min-h-0 flex-1 overflow-auto scrollbar-slim p-3 md:p-6">
         {rows.length === 0 ? (
           <p className="rounded-xl border border-sand-200 bg-white px-4 py-10 text-center text-sand-500">
             Энэ сард бүртгэлтэй идэвхтэй ажилтан алга.
           </p>
         ) : (
-          <div className="scrollbar-slim overflow-x-auto rounded-xl border border-sand-200 bg-white">
+          /* ── Гар утас: ажилтан тус бүр нэг карт, дэлгэрэнгүй нь дарахад нээгдэнэ ── */
+          <div className="space-y-1.5 md:hidden">
+            {viewRows.map((row) => (
+              <StaffCard
+                key={row.staffId}
+                row={row}
+                stat={statOfRow(row.staffId)}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* ── Таблет ба компьютер: бүтэн хүснэгт ── */}
+        {rows.length > 0 ? (
+          <div className="scrollbar-slim hidden overflow-x-auto rounded-xl border border-sand-200 bg-white md:block">
             <table className="w-max min-w-full border-separate border-spacing-0 text-sm">
               <thead>
                 <tr>
@@ -266,7 +346,7 @@ export function TimesheetView({
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
+                {viewRows.map((row) => (
                   <tr key={row.staffId} className="hover:bg-sand-50/60">
                     <td className="sticky left-0 z-10 border-b border-r border-sand-100 bg-white px-3 py-2">
                       <span className="flex items-center gap-2">
@@ -315,22 +395,17 @@ export function TimesheetView({
 
                     <td className="sticky right-0 z-10 border-b border-l border-sand-100 bg-white px-3 py-2 text-right">
                       <span className="block whitespace-nowrap font-semibold tabular-nums text-sand-900">
-                        {dayCount.get(row.staffId)?.full ?? 0} өдөр
+                        {statOfRow(row.staffId).full} өдөр
                       </span>
                       {/* Чөлөөтэй өдөр байвал л нэмж бичнэ */}
-                      {(dayCount.get(row.staffId)?.partial ?? 0) > 0 ||
-                      row.totals.absentDays > 0 ? (
+                      {leaveNote(statOfRow(row.staffId)) ? (
                         <span className="block whitespace-nowrap text-xs text-danger-600">
-                          {[
-                            (dayCount.get(row.staffId)?.partial ?? 0) > 0
-                              ? `${dayCount.get(row.staffId)?.partial} цагийн чөлөө`
-                              : null,
-                            row.totals.absentDays > 0
-                              ? `${row.totals.absentDays} бүтэн чөлөө`
-                              : null,
-                          ]
-                            .filter(Boolean)
-                            .join(" · ")}
+                          {leaveNote(statOfRow(row.staffId))}
+                        </span>
+                      ) : null}
+                      {statOfRow(row.staffId).planned > 0 ? (
+                        <span className="block whitespace-nowrap text-xs text-sand-400">
+                          {statOfRow(row.staffId).planned} хуваарьтай
                         </span>
                       ) : null}
                     </td>
@@ -339,7 +414,12 @@ export function TimesheetView({
               </tbody>
             </table>
           </div>
-        )}
+        ) : null}
+
+        <Legend
+          hasFuture={hasFuture}
+          className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 md:hidden"
+        />
 
         <p className="mt-3 text-xs text-sand-500">
           «Өдөр» гэдэг нь ЦАГИЙН ЧӨЛӨӨГҮЙ бүтэн ажилласан өдөр. Цагийн чөлөө
@@ -414,8 +494,157 @@ export function TimesheetView({
   );
 }
 
+/**
+ * Гар утасны карт: нэр, салбар, нийт өдөр нь шууд харагдана.
+ * Өдөр бүрийн бүртгэлийг дарж нээвэл сарын жижиг хуанли гарч ирнэ.
+ */
+function StaffCard({
+  row,
+  stat,
+}: {
+  row: TimesheetRow;
+  stat: Stat;
+}) {
+  const note = leaveNote(stat);
+
+  return (
+    <details className="group overflow-hidden rounded-2xl border border-sand-200 bg-white">
+      <summary className="flex cursor-pointer list-none items-center gap-3 px-3.5 py-3 [&::-webkit-details-marker]:hidden">
+        <span
+          aria-hidden
+          className="size-2.5 shrink-0 rounded-full"
+          style={{ backgroundColor: row.color }}
+        />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-medium text-sand-900">
+            {row.name}
+          </span>
+          <span className="block truncate text-xs text-sand-500">
+            {row.branchName}
+            {row.position ? ` · ${row.position}` : ""}
+          </span>
+        </span>
+        <span className="shrink-0 text-right">
+          <span className="block whitespace-nowrap font-semibold tabular-nums text-sand-900">
+            {stat.full} өдөр
+          </span>
+          {note ? (
+            <span className="block whitespace-nowrap text-[11px] text-danger-600">
+              {note}
+            </span>
+          ) : null}
+          {stat.planned > 0 ? (
+            <span className="block whitespace-nowrap text-[11px] text-sand-400">
+              {stat.planned} хуваарьтай
+            </span>
+          ) : null}
+        </span>
+        <span
+          aria-hidden
+          className="shrink-0 text-lg text-sand-300 transition group-open:rotate-90"
+        >
+          ›
+        </span>
+      </summary>
+
+      <div className="border-t border-sand-100 px-3 pb-3 pt-2">
+        <MonthGrid cells={row.cells} />
+      </div>
+    </details>
+  );
+}
+
+/** Сарын өдрүүд 7 баганаар — гарагийн байрандаа тааруулж эхэлнэ. */
+function MonthGrid({ cells }: { cells: TimesheetCell[] }) {
+  const lead = cells.length > 0 ? weekdayOf(cells[0].dateKey) : 0;
+
+  return (
+    <div className="grid grid-cols-7 gap-1 text-center">
+      {WEEKDAYS_SHORT.map((label) => (
+        <span key={label} className="pb-0.5 text-[10px] text-sand-400">
+          {label}
+        </span>
+      ))}
+      {Array.from({ length: lead }, (_, index) => (
+        <span key={`lead-${index}`} aria-hidden />
+      ))}
+      {cells.map((cell) => {
+        const style = CELL_STYLE[cell.state];
+        const partial = cell.state === "WORK" && cell.offMinutes > 0;
+        return (
+          <span
+            key={cell.dateKey}
+            title={describeCell(cell)}
+            className={`flex h-9 flex-col items-center justify-center rounded-lg text-[11px] font-semibold leading-tight ${
+              partial ? PARTIAL_CLASS : style.className
+            }`}
+          >
+            <span className="text-[9px] font-normal tabular-nums opacity-60">
+              {Number(cell.dateKey.slice(8))}
+            </span>
+            <span className="tabular-nums">
+              {partial ? `−${shortHours(cell.offMinutes)}ц` : style.short}
+            </span>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Нүдний тэмдэглэгээний тайлбар. */
+function Legend({
+  hasFuture,
+  className,
+}: {
+  hasFuture: boolean;
+  className: string;
+}) {
+  const states = hasFuture
+    ? (["WORK", "DAY_OFF", "ABSENT", "CLOSED", "FUTURE"] as const)
+    : (["WORK", "DAY_OFF", "ABSENT", "CLOSED"] as const);
+
+  return (
+    <div className={`text-[11px] text-sand-500 md:text-xs ${className}`}>
+      {states.map((state) => (
+        <span key={state} className="flex items-center gap-1.5">
+          <span
+            aria-hidden
+            className={`flex size-4 shrink-0 items-center justify-center rounded text-[10px] font-semibold ${CELL_STYLE[state].className}`}
+          >
+            {CELL_STYLE[state].short}
+          </span>
+          {CELL_STYLE[state].label}
+        </span>
+      ))}
+      <span className="flex items-center gap-1.5">
+        <span
+          aria-hidden
+          className={`flex h-4 shrink-0 items-center justify-center rounded px-1 text-[9px] font-semibold ${PARTIAL_CLASS}`}
+        >
+          −2ц
+        </span>
+        Цагийн чөлөө авсан
+      </span>
+    </div>
+  );
+}
+
+/** «1 цагийн чөлөө · 2 бүтэн чөлөө» — байхгүй бол хоосон мөр. */
+function leaveNote(stat: Stat): string {
+  return [
+    stat.partial > 0 ? `${stat.partial} цагийн чөлөө` : null,
+    stat.absent > 0 ? `${stat.absent} бүтэн чөлөө` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 function describeCell(cell: TimesheetCell): string {
   const style = CELL_STYLE[cell.state];
+  if (cell.state === "FUTURE") {
+    return cell.note ? `Ирээгүй өдөр — ${cell.note}` : "Ирээгүй өдөр";
+  }
   if (cell.state === "WORK") {
     if (cell.offMinutes === 0) return "Ажилласан өдөр";
     return `Ажилласан өдөр · ${hours(cell.offMinutes)} цагийн чөлөө${
@@ -428,6 +657,7 @@ function describeCell(cell: TimesheetCell): string {
 /** Хүснэгтийг CSV болгож татаж авна — Excel-д шууд нээгдэнэ. */
 function downloadCsv(
   monthKey: string,
+  half: Half,
   days: string[],
   rows: TimesheetRow[],
 ): void {
@@ -447,25 +677,24 @@ function downloadCsv(
   // Бүтэн ажилласан өдөр = 1 (Excel дээр мөрөө шууд нийлүүлнэ),
   // цагийн чөлөөтэй өдөр «−2ц», бусад нь үсгээр
   const body = rows.map((row) => {
-    const full = row.cells.filter(
-      (cell) => cell.state === "WORK" && cell.offMinutes === 0,
-    ).length;
-    const partial = row.cells.filter(
-      (cell) => cell.state === "WORK" && cell.offMinutes > 0,
-    ).length;
+    const { full, partial, absent } = statOf(row.cells);
+    const dayOff = row.cells.filter((cell) => cell.state === "DAY_OFF").length;
+    const offMinutes = row.cells.reduce((sum, cell) => sum + cell.offMinutes, 0);
 
     return [
       row.name,
       row.branchName,
       ...row.cells.map((cell) => {
+        // Ирээгүй өдрийг Excel дээр хоосон үлдээнэ — нийлбэрт нөлөөлөхгүй
+        if (cell.state === "FUTURE") return "";
         if (cell.state !== "WORK") return CELL_STYLE[cell.state].short;
         return cell.offMinutes > 0 ? `−${shortHours(cell.offMinutes)}ц` : "1";
       }),
       String(full),
       String(partial),
-      String(row.totals.absentDays),
-      String(row.totals.dayOffDays),
-      hours(row.totals.offMinutes),
+      String(absent),
+      String(dayOff),
+      hours(offMinutes),
     ];
   });
 
@@ -479,7 +708,7 @@ function downloadCsv(
   );
   const link = document.createElement("a");
   link.href = url;
-  link.download = `tsagiin-burtgel-${monthKey}.csv`;
+  link.download = `tsagiin-burtgel-${monthKey}${half ? `-${half}-hagas` : ""}.csv`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -500,7 +729,7 @@ function Pill({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm transition ${
+      className={`whitespace-nowrap rounded-full px-3 py-1 text-[13px] transition md:px-3.5 md:py-1.5 md:text-sm ${
         active
           ? "bg-white font-medium text-sand-900 shadow-sm"
           : "text-sand-500 hover:text-sand-800"
@@ -523,7 +752,7 @@ function MonthArrow({
       type="button"
       onClick={onClick}
       aria-label={direction === "prev" ? "Өмнөх сар" : "Дараагийн сар"}
-      className="flex size-8 items-center justify-center rounded-full text-lg text-sand-400 transition hover:bg-sand-200 hover:text-sand-800"
+      className="flex size-8 shrink-0 items-center justify-center rounded-full text-lg text-sand-400 transition hover:bg-sand-200 hover:text-sand-800"
     >
       {direction === "prev" ? "‹" : "›"}
     </button>

@@ -10,7 +10,6 @@ type Props = {
   branches: BranchSummary[];
   activeBranchId: string;
   dateKey: string;
-  /** Идэвхтэй салбарт захиалга бүртгэх эрхтэй эсэх */
   canWrite: boolean;
 };
 
@@ -23,7 +22,6 @@ export function CalendarHeader({
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // Сервер шинэ хуудсыг буцаах хүртэл сонголтыг шууд харуулна
   const [optimistic, setOptimistic] = useOptimistic({
     branchId: activeBranchId,
     dateKey,
