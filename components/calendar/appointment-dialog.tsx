@@ -263,6 +263,27 @@ export function AppointmentDialog({
   /** Урьдчилж авсан дүн — «төлсөн» биш үед л хэрэглэнэ. */
   const [deposit, setDeposit] = useState("");
 
+  /**
+   * Хурдан цуцлалт — цонх нээмэгц доод мөрөнд томоор харагдана.
+   *
+   * Ресепшн утсаар ярьж байхдаа нэг дарж чөлөөлнө: шалтгаан асуухгүй, гүйлгэж
+   * доош бууж «Төлөв» хэсэг хайх ч шаардлагагүй. Андуурсан бол тэр даруй
+   * «Сэргээх» болж хувирна.
+   */
+  const [isCancelling, startCancel] = useTransition();
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const cancelled =
+    editing?.status === "CANCELLED" || editing?.status === "NO_SHOW";
+
+  function quickStatus(status: AppointmentStatus) {
+    if (!editing) return;
+    setCancelError(null);
+    startCancel(async () => {
+      const outcome = await setAppointmentStatus(editing.id, status);
+      setCancelError(outcome.ok ? null : outcome.issues.join(" "));
+    });
+  }
+
   const action = state.mode === "create" ? createAppointment : updateAppointment;
   const [result, formAction, isPending] = useActionState<
     ActionResult | null,
@@ -908,14 +929,43 @@ export function AppointmentDialog({
             ) : null}
           </fieldset>
 
-          <footer className="sticky bottom-0 flex shrink-0 items-center justify-between gap-3 border-t border-sand-200 bg-white px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-3">
-            <div className="text-sm">
+          <footer className="sticky bottom-0 flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-sand-200 bg-white px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-3">
+            {cancelError ? (
+              <p role="alert" className="w-full text-sm text-danger-600">
+                {cancelError}
+              </p>
+            ) : null}
+
+            <div className="flex min-w-0 items-center gap-3 text-sm">
+              {/* Цуцлах товч — хадгалах товчноос ХОЛ, санамсаргүй дарахаас
+                  сэргийлж зүүн захад тусад нь байрлана. */}
+              {editing && canWrite ? (
+                <button
+                  type="button"
+                  disabled={isCancelling}
+                  onClick={() => quickStatus(cancelled ? "BOOKED" : "CANCELLED")}
+                  className={`shrink-0 rounded-xl border px-4 py-2 text-sm font-medium transition disabled:opacity-50 ${
+                    cancelled
+                      ? "border-sand-300 text-sand-700 hover:bg-sand-100"
+                      : "border-danger-200 bg-danger-50 text-danger-700 hover:brightness-95"
+                  }`}
+                >
+                  {isCancelling
+                    ? "Түр хүлээнэ үү…"
+                    : cancelled
+                      ? "Сэргээх"
+                      : "Цуцлах"}
+                </button>
+              ) : null}
+
               {selectedServices.length > 0 ? (
-                <span className="font-semibold text-sand-900">
+                <span className="truncate font-semibold text-sand-900">
                   {formatPrice(totalPrice)}
                 </span>
               ) : (
-                <span className="text-sand-500">Үйлчилгээ сонгоно уу</span>
+                <span className="truncate text-sand-500">
+                  Үйлчилгээ сонгоно уу
+                </span>
               )}
             </div>
             <div className="flex gap-2">

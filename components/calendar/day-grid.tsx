@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  useTransition,
 } from "react";
 import type {
   BranchSummary,
@@ -19,15 +20,54 @@ import { formatPrice } from "@/lib/labels";
 import { buildBookingText } from "@/lib/booking-text";
 import { CopyButton } from "@/components/ui/copy-button";
 import { PAYMENT_STATE_LABELS, summarize } from "@/lib/payments";
+import {
+  moveAppointment,
+  setAppointmentStatus,
+} from "@/app/(app)/calendar/actions";
 import { AppointmentDialog, type DialogState } from "./appointment-dialog";
 
-/** Нэг минут хэдэн пиксел эзлэх — 1 цаг = 114px */
-const PX_PER_MIN = 1.9;
+/**
+ * Нэг минут хэдэн пиксел эзлэх.
+ *
+ * Гар утсанд тогтмол нягт — хуруунд ономтой байх нь чухал, доош гүйлгэнэ.
+ * Компьютер дээр өдрийг ДЭЛГЭЦЭНД БАГТААНА: боломжит өндрийг өдрийн урттаа
+ * хувааж масштабыг өөрөө олно. Хэт нягтарвал уншигдахаа болих тул доод
+ * хязгаартай — тэр үед л гүйлгэнэ.
+ */
+const PX_PER_MIN_PHONE = 1.1; // 1 цаг = 66px
+const PX_PER_MIN_WIDE = 1.6; // хэмжилт ирэхээс өмнөх түр утга
+const PX_PER_MIN_MIN = 0.55; // 1 цаг = 33px — үүнээс нягт болгохгүй
+const PX_PER_MIN_MAX = 1.9; // том дэлгэцэнд ч хэт сунгахгүй
+/** Хуанлийн их бие дээрх зай (`pt-2.5`) ба доод захын амьсгал. */
+const GRID_PADDING = 14;
+
+const WIDE_QUERY = "(min-width: 768px)";
+
+function subscribeToWidth(onChange: () => void) {
+  const media = window.matchMedia(WIDE_QUERY);
+  media.addEventListener("change", onChange);
+  return () => media.removeEventListener("change", onChange);
+}
+
+function getWideSnapshot(): boolean {
+  return window.matchMedia(WIDE_QUERY).matches;
+}
+
+/** Сервер дээр дэлгэцийн өргөн мэдэгдэхгүй — өргөн гэж үзнэ. */
+function getServerWideSnapshot(): boolean {
+  return true;
+}
 /** Хуанлийн шугам ба цаг сонголтын алхам — 30 минут. */
 export const SLOT_STEP = 30;
-/** Багана ба цагийн баганын өргөн — гар утсанд нарийсна. */
-const COL = "min-w-[168px] flex-1 md:min-w-[210px]";
-const GUTTER = "w-14 shrink-0 md:w-[76px]";
+/**
+ * Багана ба цагийн баганын өргөн.
+ *
+ * Гар утсанд баганууд дэлгэцэндээ БАГТАЖ агшина (`min-w-0`) — хөндлөн
+ * гүйлгэх шаардлагагүй. Ажилтан олон бол доорх шүүлтүүрээс нэгийг сонгоно.
+ * Дэлгэц томрох үед л тогтмол өргөнтэй болж, шаардлагатай бол гүйлгэнэ.
+ */
+const COL = "min-w-0 flex-1 md:min-w-[210px]";
+const GUTTER = "w-9 shrink-0 md:w-[76px]";
 
 type Props = {
   branch: BranchSummary;
@@ -45,6 +85,19 @@ type Props = {
   canWrite: boolean;
   /** Админ бол сул цаг дээр шууд чөлөө нэмж чадна */
   isAdmin: boolean;
+};
+
+/**
+ * Хулганаар чирч буй захиалга.
+ *
+ * Барьсан цэгийг (`grabMin`) хадгалдаг тул блок хулганы дор байрлалаа алдалгүй
+ * хөдөлнө: хажуу тийш шулуун чирвэл цаг нь хэвээрээ, зөвхөн ажилтан солигдоно.
+ */
+type DragState = {
+  appointment: DayAppointment;
+  /** Блокийн эхлэлээс хулгана хэдэн минутын гүнд байсан */
+  grabMin: number;
+  durationMin: number;
 };
 
 /** Захиалгын өнгө — үйлчилгээнийх, эс бөгөөс ангиллынх. */
@@ -82,6 +135,15 @@ function initialsOf(name: string): string {
   return cleaned.slice(0, 2).toUpperCase();
 }
 
+/** Утасны мастер сонгох чипний хэв маяг. */
+function chipClass(active: boolean): string {
+  return `flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition ${
+    active
+      ? "border-sand-900 bg-sand-900 text-white"
+      : "border-sand-300 text-sand-700"
+  }`;
+}
+
 export function DayGrid({
   branch,
   dateKey,
@@ -96,16 +158,94 @@ export function DayGrid({
   const searchParams = useSearchParams();
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const headRef = useRef<HTMLDivElement>(null);
+
+  const isWide = useSyncExternalStore(
+    subscribeToWidth,
+    getWideSnapshot,
+    getServerWideSnapshot,
+  );
+
+  /** Хуанлийн их биед үлдэх өндөр — ажилтны толгойг хассан цэвэр зай. */
+  const [available, setAvailable] = useState<number | null>(null);
+
+  useEffect(() => {
+    const box = scrollRef.current;
+    const head = headRef.current;
+    if (!box || !head) return;
+
+    // Ажиглалт эхлэхэд эхний хэмжилт өөрөө ирнэ — гараар дуудах шаардлагагүй
+    const observer = new ResizeObserver(() => {
+      setAvailable(box.clientHeight - head.offsetHeight - GRID_PADDING);
+    });
+    observer.observe(box);
+    observer.observe(head);
+    return () => observer.disconnect();
+  }, []);
+
+  // ── Чирж зөөх ──
+  const [drag, setDrag] = useState<DragState | null>(null);
+  /** Одоо хулгана аль баганын аль цагийн дээр байгаа — урьдчилсан харагдац */
+  const [dropAt, setDropAt] = useState<{
+    staffId: string;
+    startMin: number;
+  } | null>(null);
+  const [isBusy, startAction] = useTransition();
+
+  /**
+   * Хуанлийн дээд талын мэдэгдэл — алдаа, эсвэл цуцлалтыг буцаах санал.
+   *
+   * Аль өдрийнх болохыг хамт хадгална: өөр өдөр рүү шилжихэд өмнөх өдрийн
+   * мэдэгдэл өөрөө хамаагүй болж алга болно.
+   */
+  const [notice, setNotice] = useState<
+    | { kind: "issues"; dateKey: string; title: string; issues: string[] }
+    | {
+        kind: "undo";
+        dateKey: string;
+        id: string;
+        clientName: string;
+        status: DayAppointment["status"];
+      }
+    | null
+  >(null);
+  const activeNotice = notice?.dateKey === dateKey ? notice : null;
+
+  /** Цуцлагдсан захиалгыг хуанлиас нууна — тэр цаг сул мэт харагдана. */
+  const [showCancelled, setShowCancelled] = useState(false);
+
+  function showIssues(title: string, issues: string[]) {
+    setNotice({ kind: "issues", dateKey, title, issues });
+  }
 
   // Тухайн өдрийн ажлын цаг — онцгой тохиргоо байвал түүнийг барина
   const openMin = closure?.openMin ?? branch.openMin;
   const closeMin = closure?.closeMin ?? branch.closeMin;
 
+  const cancelledCount = useMemo(
+    () => appointments.filter((a) => a.status === "CANCELLED").length,
+    [appointments],
+  );
+
+  /**
+   * Хуанли дээр ЗУРАГДАХ захиалгууд.
+   *
+   * Цуцлагдсаныг нууна — ресепшн тэр цагийг шууд сул гэж харна. «Ирээгүй»
+   * захиалга үлдэнэ: цаг нь бодитоор зарцуулагдсан, түүх нь харагдах ёстой.
+   */
+  const shownAppointments = useMemo(
+    () =>
+      showCancelled
+        ? appointments
+        : appointments.filter((a) => a.status !== "CANCELLED"),
+    [appointments, showCancelled],
+  );
+
   // Ажлын цагаас гадуур захиалга байвал хуанлийг сунгана — нуугдахаас сэргийлнэ
   const { rangeStart, rangeEnd } = useMemo(() => {
     let start = openMin;
     let end = closeMin;
-    for (const appt of appointments) {
+    for (const appt of shownAppointments) {
       start = Math.min(start, toLocalMinutes(appt.startAt));
       const apptEnd = toLocalMinutes(appt.endAt);
       end = Math.max(end, apptEnd === 0 ? 24 * 60 : apptEnd);
@@ -114,9 +254,20 @@ export function DayGrid({
       rangeStart: Math.floor(start / 60) * 60,
       rangeEnd: Math.ceil(end / 60) * 60,
     };
-  }, [appointments, openMin, closeMin]);
+  }, [shownAppointments, openMin, closeMin]);
 
-  const gridHeight = (rangeEnd - rangeStart) * PX_PER_MIN;
+  /**
+   * Босоо масштаб. Компьютер дээр өдрийг үлдсэн өндөрт багтаана; хэмжилт
+   * ирээгүй эсвэл хэт нягтарч байвал уншигдах хэмжээндээ зогсоно.
+   */
+  const pxPerMin = useMemo(() => {
+    if (!isWide) return PX_PER_MIN_PHONE;
+    if (available === null || rangeEnd <= rangeStart) return PX_PER_MIN_WIDE;
+    const fit = available / (rangeEnd - rangeStart);
+    return Math.min(Math.max(fit, PX_PER_MIN_MIN), PX_PER_MIN_MAX);
+  }, [isWide, available, rangeStart, rangeEnd]);
+
+  const gridHeight = (rangeEnd - rangeStart) * pxPerMin;
 
   /**
    * Цагийн шугам 30 минут тутам. Бүтэн цаг нь тод, хагас цаг нь бүдэг —
@@ -134,25 +285,40 @@ export function DayGrid({
    * (хуваарь нь хожим өөрчлөгдсөн тохиолдол).
    */
   const visibleStaff = useMemo(() => {
-    const hasAppointments = new Set(appointments.map((a) => a.staffId));
+    const hasAppointments = new Set(shownAppointments.map((a) => a.staffId));
     return staff.filter(
       (member) => hasAppointments.has(member.id) || !isRestingAllDay(member),
     );
-  }, [staff, appointments]);
+  }, [staff, shownAppointments]);
 
   const byStaff = useMemo(() => {
     const map = new Map<string, DayAppointment[]>();
     for (const member of visibleStaff) map.set(member.id, []);
-    for (const appt of appointments) map.get(appt.staffId)?.push(appt);
+    for (const appt of shownAppointments) map.get(appt.staffId)?.push(appt);
     return map;
-  }, [visibleStaff, appointments]);
+  }, [visibleStaff, shownAppointments]);
+
+  /**
+   * Гар утсанд НЭГ мастерын багана руу төвлөрөх.
+   *
+   * Зөвхөн жижиг дэлгэцэд үйлчилнэ — баганыг CSS-ээр нууна (`hidden md:block`),
+   * тул компьютер дээр эсвэл утсаа хэвтээ болгоход бүх багана эргэж гарна.
+   */
+  const [focusStaffId, setFocusStaffId] = useState<string | null>(null);
+  const focus = visibleStaff.some((member) => member.id === focusStaffId)
+    ? focusStaffId
+    : null;
+
+  function hiddenOnPhone(staffId: string): string {
+    return focus && focus !== staffId ? "hidden md:block" : "";
+  }
 
   // Ажлын цаг руу автоматаар гүйлгэнэ
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    el.scrollTop = Math.max(0, (openMin - rangeStart) * PX_PER_MIN - 8);
-  }, [openMin, rangeStart, dateKey]);
+    el.scrollTop = Math.max(0, (openMin - rangeStart) * pxPerMin - 8);
+  }, [openMin, rangeStart, dateKey, pxPerMin]);
 
   // Толгойн «Захиалга нэмэх» товч `?new=1`-ээр цонх нээнэ
   const wantsNew = searchParams.get("new") === "1";
@@ -237,6 +403,109 @@ export function DayGrid({
     clearNewParam();
   }
 
+  // ─────────────────────── Чирж зөөх ───────────────────────
+
+  function beginDrag(appointment: DayAppointment, grabMin: number) {
+    const startMin = toLocalMinutes(appointment.startAt);
+    const endLocal = toLocalMinutes(appointment.endAt);
+    const endMin = endLocal <= startMin ? 24 * 60 : endLocal;
+    setNotice(null);
+    setDrag({ appointment, grabMin, durationMin: endMin - startMin });
+  }
+
+  function endDrag() {
+    setDrag(null);
+    setDropAt(null);
+  }
+
+  /**
+   * Хулганы байрлалаас захиалгын ШИНЭ эхлэх цагийг бодно.
+   * Барьсан цэгийг хасаад 30 минутын нүд рүү бөөрөнхийлж, хуанлийн мужид барина.
+   */
+  function snapStart(pointerMin: number, state: DragState): number {
+    const snapped =
+      Math.round((pointerMin - state.grabMin) / SLOT_STEP) * SLOT_STEP;
+    return Math.max(
+      rangeStart,
+      Math.min(snapped, rangeEnd - state.durationMin),
+    );
+  }
+
+  function hoverColumn(staffId: string, pointerMin: number) {
+    if (!drag) return;
+    const startMin = snapStart(pointerMin, drag);
+    // `dragover` пиксел тутамд дуудагддаг — нүд солигдоогүй бол дахин зурахгүй
+    setDropAt((prev) =>
+      prev && prev.staffId === staffId && prev.startMin === startMin
+        ? prev
+        : { staffId, startMin },
+    );
+  }
+
+  function dropInColumn(staffId: string, pointerMin: number) {
+    const state = drag;
+    endDrag();
+    if (!state) return;
+
+    const startMin = snapStart(pointerMin, state);
+    // Байрандаа буцаж унасан бол сервер зовоохгүй
+    if (
+      staffId === state.appointment.staffId &&
+      startMin === toLocalMinutes(state.appointment.startAt)
+    ) {
+      return;
+    }
+
+    startAction(async () => {
+      const result = await moveAppointment({
+        appointmentId: state.appointment.id,
+        staffId,
+        dateKey,
+        startMin,
+      });
+      if (!result.ok) showIssues("Зөөх боломжгүй.", result.issues);
+    });
+  }
+
+  // ───────────────────── Нэг товчоор цуцлах ─────────────────────
+
+  /**
+   * Хуанлинаас шууд цуцална — шалтгаан асуухгүй.
+   *
+   * Ресепшн утсаар ярьж байхдаа нэг дарж чөлөөлнө. Андуурсан бол дээд талын
+   * мэдэгдлээс «Буцаах» дарж хуучин төлөв рүү нь буцаана. Дэлгэрэнгүй
+   * шалтгаан бичих шаардлагатай бол захиалгын цонхны «Төлөв» хэсэг хэвээрээ.
+   */
+  function cancelAppointment(appointment: DayAppointment) {
+    setNotice(null);
+    const previous = appointment.status;
+    startAction(async () => {
+      const result = await setAppointmentStatus(appointment.id, "CANCELLED");
+      if (!result.ok) {
+        showIssues("Цуцлаж чадсангүй.", result.issues);
+        return;
+      }
+      setNotice({
+        kind: "undo",
+        dateKey,
+        id: appointment.id,
+        clientName: appointment.client.name,
+        status: previous,
+      });
+    });
+  }
+
+  function undoCancel() {
+    const target = activeNotice?.kind === "undo" ? activeNotice : null;
+    if (!target) return;
+    setNotice(null);
+    startAction(async () => {
+      // Цагийг нь хооронд нь өөр хүн авсан байвал сервер татгалзана
+      const result = await setAppointmentStatus(target.id, target.status);
+      if (!result.ok) showIssues("Цуцлалтыг буцаах боломжгүй.", result.issues);
+    });
+  }
+
   /**
    * Захиалгын баталгаажуулалтын текст — хамтарсан захиалгын бүх мөрийг нэгтгэнэ.
    * Хуанли дээрх аль ч мөрөөс хуулахад НЭГ бүтэн мессеж гарна.
@@ -291,13 +560,113 @@ export function DayGrid({
         </div>
       ) : null}
 
+      {activeNotice?.kind === "issues" ? (
+        <div
+          role="alert"
+          className="no-print flex items-start gap-3 border-b border-danger-200 bg-danger-50 px-6 py-2 text-sm text-danger-700"
+        >
+          <span className="min-w-0 flex-1">
+            <strong className="font-medium">{activeNotice.title}</strong>{" "}
+            {activeNotice.issues.join(" ")}
+          </span>
+          <button
+            type="button"
+            onClick={() => setNotice(null)}
+            className="shrink-0 font-medium underline underline-offset-2"
+          >
+            Хаах
+          </button>
+        </div>
+      ) : null}
+
+      {activeNotice?.kind === "undo" ? (
+        <div className="no-print flex items-center gap-3 border-b border-sand-200 bg-sand-50 px-6 py-2 text-sm text-sand-700">
+          <span className="min-w-0 flex-1">
+            <strong className="font-medium text-sand-900">
+              {activeNotice.clientName}
+            </strong>
+            -ийн захиалга цуцлагдаж, тэр цаг сул боллоо.
+          </span>
+          <button
+            type="button"
+            onClick={undoCancel}
+            disabled={isBusy}
+            className="shrink-0 rounded-lg border border-sand-300 bg-white px-2.5 py-1 text-xs font-medium text-sand-800 transition hover:bg-sand-100 disabled:opacity-50"
+          >
+            Цуцлалтыг буцаах
+          </button>
+          <button
+            type="button"
+            onClick={() => setNotice(null)}
+            className="shrink-0 text-xs text-sand-500 underline underline-offset-2 hover:text-sand-700"
+          >
+            Хаах
+          </button>
+        </div>
+      ) : null}
+
+      {cancelledCount > 0 ? (
+        <div className="no-print flex items-center gap-2 border-b border-sand-200 px-6 py-1.5 text-xs text-sand-500">
+          <span>
+            {cancelledCount} цуцлагдсан захиалга{" "}
+            {showCancelled ? "харагдаж байна" : "нуугдсан — цаг нь сул"}.
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowCancelled((value) => !value)}
+            className="font-medium text-sand-700 underline underline-offset-2"
+          >
+            {showCancelled ? "Нуух" : "Харах"}
+          </button>
+        </div>
+      ) : null}
+
+      {/*
+        Гар утсанд мастер сонгох. Хоёр багана дэлгэцэнд тухтай багтдаг тул
+        гурав ба түүнээс дээш байхад л гарч ирнэ — босоо зай дэмий эзлэхгүй.
+      */}
+      {visibleStaff.length > 2 ? (
+        <div className="no-print flex gap-1.5 overflow-x-auto scrollbar-slim border-b border-sand-200 px-3 py-2 md:hidden">
+          <button
+            type="button"
+            onClick={() => setFocusStaffId(null)}
+            aria-pressed={focus === null}
+            className={chipClass(focus === null)}
+          >
+            Бүгд
+          </button>
+          {visibleStaff.map((member) => (
+            <button
+              key={member.id}
+              type="button"
+              onClick={() => setFocusStaffId(member.id)}
+              aria-pressed={focus === member.id}
+              className={chipClass(focus === member.id)}
+            >
+              <span
+                aria-hidden
+                className="size-2 shrink-0 rounded-full"
+                style={{ backgroundColor: member.color }}
+              />
+              {member.name}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       <div
-        className="min-h-0 flex-1 overflow-auto scrollbar-slim bg-white"
+        aria-busy={isBusy}
+        className={`min-h-0 flex-1 overflow-auto scrollbar-slim bg-white ${
+          isBusy ? "pointer-events-none opacity-60 transition-opacity" : ""
+        }`}
         ref={scrollRef}
       >
-        <div className="relative w-max min-w-full">
+        <div className="relative w-full min-w-full md:w-max">
           {/* ── Ажилтны толгой ── */}
-          <div className="sticky top-0 z-20 flex border-b border-sand-200 bg-white">
+          <div
+            ref={headRef}
+            className="sticky top-0 z-20 flex border-b border-sand-200 bg-white"
+          >
             <div className={GUTTER} />
             {visibleStaff.map((member) => {
               const schedule = member.schedules[0];
@@ -311,20 +680,20 @@ export function DayGrid({
               return (
                 <div
                   key={member.id}
-                  className={`${COL} border-l border-sand-200 px-3 py-3 text-center md:py-4`}
+                  className={`${COL} ${hiddenOnPhone(member.id)} border-l border-sand-200 px-1 py-2 text-center md:px-3 md:py-4`}
                 >
                   <span
                     aria-hidden
-                    className="mx-auto flex size-10 items-center justify-center rounded-full text-[13px] font-semibold tracking-wide text-white ring-2 ring-white md:size-11 md:text-sm"
+                    className="mx-auto flex size-7 items-center justify-center rounded-full text-[11px] font-semibold tracking-wide text-white ring-2 ring-white md:size-11 md:text-sm"
                     style={{ backgroundColor: member.color }}
                   >
                     {initialsOf(member.name)}
                   </span>
-                  <p className="mt-2 truncate text-sm font-medium text-sand-900 md:text-[15px]">
+                  <p className="mt-1 truncate text-[11px] font-medium text-sand-900 md:mt-2 md:text-[15px]">
                     {member.name}
                   </p>
                   <p
-                    className={`mt-0.5 truncate text-xs ${
+                    className={`truncate text-[10px] md:mt-0.5 md:text-xs ${
                       dayOff ? "text-sand-400" : "text-sand-500"
                     }`}
                   >
@@ -344,15 +713,17 @@ export function DayGrid({
             >
               {timeMarks.map((minute) => {
                 const onTheHour = minute % 60 === 0;
+                // Шахуу масштабд хагас цагийн шошго давхцах тул зөвхөн бүтэн цаг
+                if (!onTheHour && SLOT_STEP * pxPerMin < 26) return null;
                 return (
                   <div
                     key={minute}
-                    className={`absolute right-2 -translate-y-1/2 font-mono tabular-nums md:right-4 ${
+                    className={`absolute right-1 -translate-y-1/2 font-mono tabular-nums md:right-4 ${
                       onTheHour
-                        ? "text-[11px] text-sand-500 md:text-xs"
-                        : "text-[10px] text-sand-300 md:text-[11px]"
+                        ? "text-[10px] text-sand-500 md:text-xs"
+                        : "text-[9px] text-sand-300 md:text-[11px]"
                     }`}
-                    style={{ top: (minute - rangeStart) * PX_PER_MIN }}
+                    style={{ top: (minute - rangeStart) * pxPerMin }}
                   >
                     {formatMinutes(minute)}
                   </div>
@@ -369,8 +740,19 @@ export function DayGrid({
                 rangeEnd={rangeEnd}
                 gridHeight={gridHeight}
                 timeMarks={timeMarks}
+                pxPerMin={pxPerMin}
                 canWrite={canWrite}
                 copyTextFor={copyTextFor}
+                drag={drag}
+                dropStartMin={
+                  dropAt?.staffId === member.id ? dropAt.startMin : null
+                }
+                onDragStartAppointment={beginDrag}
+                onDragEndAppointment={endDrag}
+                onDragOverColumn={hoverColumn}
+                onDropInColumn={dropInColumn}
+                onCancel={cancelAppointment}
+                phoneHidden={hiddenOnPhone(member.id)}
                 onCreate={(startMin) => {
                   clearNewParam();
                   setDialog({
@@ -402,6 +784,7 @@ export function DayGrid({
             dateKey={dateKey}
             rangeStart={rangeStart}
             rangeEnd={rangeEnd}
+            pxPerMin={pxPerMin}
           />
         </div>
       </div>
@@ -433,10 +816,19 @@ function StaffColumn({
   rangeEnd,
   gridHeight,
   timeMarks,
+  pxPerMin,
   canWrite,
   copyTextFor,
   onCreate,
   onOpen,
+  drag,
+  dropStartMin,
+  onDragStartAppointment,
+  onDragEndAppointment,
+  onDragOverColumn,
+  onDropInColumn,
+  onCancel,
+  phoneHidden,
 }: {
   member: DayStaff;
   appointments: DayAppointment[];
@@ -444,10 +836,22 @@ function StaffColumn({
   rangeEnd: number;
   gridHeight: number;
   timeMarks: number[];
+  /** Нэг минутын өндөр — дэлгэцийн өргөнөөс хамаарна */
+  pxPerMin: number;
   canWrite: boolean;
   copyTextFor: (appointment: DayAppointment) => string;
   onCreate: (startMin: number) => void;
   onOpen: (appointment: DayAppointment) => void;
+  drag: DragState | null;
+  /** Энэ багана дээр буулгавал эхлэх цаг — өөр багана дээр байвал `null` */
+  dropStartMin: number | null;
+  onDragStartAppointment: (appointment: DayAppointment, grabMin: number) => void;
+  onDragEndAppointment: () => void;
+  onDragOverColumn: (staffId: string, pointerMin: number) => void;
+  onDropInColumn: (staffId: string, pointerMin: number) => void;
+  onCancel: (appointment: DayAppointment) => void;
+  /** Гар утсанд энэ баганыг нуух эсэх — мастер сонголтоос хамаарна */
+  phoneHidden: string;
 }) {
   const schedule = member.schedules[0];
   const dayOff = !schedule || schedule.isDayOff;
@@ -458,15 +862,38 @@ function StaffColumn({
   function handleClick(event: React.MouseEvent<HTMLDivElement>) {
     if (locked) return;
     const rect = event.currentTarget.getBoundingClientRect();
-    const raw = rangeStart + (event.clientY - rect.top) / PX_PER_MIN;
+    const raw = rangeStart + (event.clientY - rect.top) / pxPerMin;
     // Дарсан цагийг 30 минутын нүд рүү бөөрөнхийлнө
     const snapped = Math.floor(raw / SLOT_STEP) * SLOT_STEP;
     onCreate(Math.max(rangeStart, Math.min(snapped, rangeEnd - SLOT_STEP)));
   }
 
+  /** Хулганы босоо байрлалыг баганын минут болгоно. */
+  function pointerMinutes(event: React.DragEvent<HTMLDivElement>): number {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return rangeStart + (event.clientY - rect.top) / pxPerMin;
+  }
+
+  // Амралттай багана ба бичих эрхгүй хэрэглэгч захиалга хүлээж авахгүй
+  const acceptsDrop = Boolean(drag) && !locked;
+
   return (
     <div
-      className={`relative ${COL} border-l border-sand-200`}
+      onDragOver={(event) => {
+        if (!acceptsDrop) return;
+        // `preventDefault` дуудсан үед л буулгах боломжтой болно
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        onDragOverColumn(member.id, pointerMinutes(event));
+      }}
+      onDrop={(event) => {
+        if (!acceptsDrop) return;
+        event.preventDefault();
+        onDropInColumn(member.id, pointerMinutes(event));
+      }}
+      className={`relative ${COL} ${phoneHidden} border-l border-sand-200 ${
+        acceptsDrop && dropStartMin !== null ? "bg-brand-500/[0.04]" : ""
+      }`}
       style={{ height: gridHeight }}
     >
       {timeMarks.map((minute) => (
@@ -475,7 +902,7 @@ function StaffColumn({
           className={`pointer-events-none absolute inset-x-0 border-t ${
             minute % 60 === 0 ? "border-sand-200" : "border-sand-100"
           }`}
-          style={{ top: (minute - rangeStart) * PX_PER_MIN }}
+          style={{ top: (minute - rangeStart) * pxPerMin }}
         />
       ))}
 
@@ -483,8 +910,18 @@ function StaffColumn({
         <div className="day-off-shade pointer-events-none absolute inset-0" />
       ) : (
         <>
-          <Shade from={rangeStart} to={schedule.startMin} rangeStart={rangeStart} />
-          <Shade from={schedule.endMin} to={rangeEnd} rangeStart={rangeStart} />
+          <Shade
+            from={rangeStart}
+            to={schedule.startMin}
+            rangeStart={rangeStart}
+            pxPerMin={pxPerMin}
+          />
+          <Shade
+            from={schedule.endMin}
+            to={rangeEnd}
+            rangeStart={rangeStart}
+            pxPerMin={pxPerMin}
+          />
         </>
       )}
 
@@ -493,8 +930,8 @@ function StaffColumn({
           key={index}
           className="day-off-shade pointer-events-none absolute inset-x-0 flex items-start justify-center px-1 pt-1 text-[11px] text-sand-500"
           style={{
-            top: ((off.startMin ?? 0) - rangeStart) * PX_PER_MIN,
-            height: ((off.endMin ?? 24 * 60) - (off.startMin ?? 0)) * PX_PER_MIN,
+            top: ((off.startMin ?? 0) - rangeStart) * pxPerMin,
+            height: ((off.endMin ?? 24 * 60) - (off.startMin ?? 0)) * pxPerMin,
           }}
         >
           <span className="truncate">{off.reason ?? "Чөлөө"}</span>
@@ -514,12 +951,34 @@ function StaffColumn({
           key={appointment.id}
           appointment={appointment}
           rangeStart={rangeStart}
+          pxPerMin={pxPerMin}
           column={column}
           columns={columns}
           copyTextFor={copyTextFor}
           onOpen={onOpen}
+          canDrag={canWrite}
+          isDragging={drag?.appointment.id === appointment.id}
+          onDragStart={onDragStartAppointment}
+          onDragEnd={onDragEndAppointment}
+          onCancel={onCancel}
         />
       ))}
+
+      {/* Хаана унахыг урьдчилан харуулна — шинэ цаг нь энд бичигдэнэ */}
+      {drag && dropStartMin !== null ? (
+        <div
+          className="pointer-events-none absolute inset-x-1 z-20 flex items-start justify-center rounded-lg border-2 border-dashed border-brand-500 bg-brand-500/10 px-1 pt-0.5"
+          style={{
+            top: (dropStartMin - rangeStart) * pxPerMin,
+            height: Math.max(drag.durationMin * pxPerMin, 22),
+          }}
+        >
+          <span className="truncate font-mono text-[11px] font-medium tabular-nums text-sand-700">
+            {formatMinutes(dropStartMin)}–
+            {formatMinutes(dropStartMin + drag.durationMin)}
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -528,18 +987,20 @@ function Shade({
   from,
   to,
   rangeStart,
+  pxPerMin,
 }: {
   from: number;
   to: number;
   rangeStart: number;
+  pxPerMin: number;
 }) {
   if (to <= from) return null;
   return (
     <div
       className="pointer-events-none absolute inset-x-0 bg-sand-100"
       style={{
-        top: (from - rangeStart) * PX_PER_MIN,
-        height: (to - from) * PX_PER_MIN,
+        top: (from - rangeStart) * pxPerMin,
+        height: (to - from) * pxPerMin,
       }}
     />
   );
@@ -548,17 +1009,30 @@ function Shade({
 function AppointmentBlock({
   appointment,
   rangeStart,
+  pxPerMin,
   column,
   columns,
   copyTextFor,
   onOpen,
+  canDrag,
+  isDragging,
+  onDragStart,
+  onDragEnd,
+  onCancel,
 }: {
   appointment: DayAppointment;
   rangeStart: number;
+  pxPerMin: number;
   column: number;
   columns: number;
   copyTextFor: (appointment: DayAppointment) => string;
   onOpen: (appointment: DayAppointment) => void;
+  /** Энэ салбарт бичих эрхтэй эсэх — эрхгүй бол чирэгдэхгүй */
+  canDrag: boolean;
+  isDragging: boolean;
+  onDragStart: (appointment: DayAppointment, grabMin: number) => void;
+  onDragEnd: () => void;
+  onCancel: (appointment: DayAppointment) => void;
 }) {
   const startMin = toLocalMinutes(appointment.startAt);
   const endLocal = toLocalMinutes(appointment.endAt);
@@ -569,7 +1043,14 @@ function AppointmentBlock({
   const cancelled = appointment.status === "CANCELLED";
   const noShow = appointment.status === "NO_SHOW";
   const width = 100 / columns;
-  const compact = duration < 40;
+  const height = Math.max(duration * pxPerMin - 4, 22);
+  /**
+   * Намхан блокт үйлчилгээний нэр багтахгүй — цаг ба нэрийг л үлдээнэ.
+   * Хугацаагаар биш, БОДИТ өндрөөр шийднэ: утсанд нэг минут нь намхан.
+   */
+  const compact = height < 56;
+  /** Маш намхан блок — цаг ба нэрийг НЭГ мөрөнд шахна. */
+  const tiny = height < 34;
 
   // Хамтарсан захиалга — нэг үйлчлүүлэгч хоёр ажилтанд зэрэг үйлчлүүлж байна
   const grouped = Boolean(appointment.groupId);
@@ -592,30 +1073,49 @@ function AppointmentBlock({
             }
           : null;
 
+  /**
+   * Цуцлагдсан захиалгыг чирэхгүй — сервер ч татгалзана. Эхлээд төлөвийг нь
+   * сэргээх ёстой, эс тэгвэл идэвхтэй захиалгын цаг руу чимээгүй шургална.
+   */
+  const draggable = canDrag && !cancelled && !noShow;
+
   // Хуулах товчийг дотор нь байрлуулах тул блок нь <button> БИШ — HTML-д
   // товч дотор товч байж болохгүй. Гар (keyboard)-ын үйлдлийг гараар өгнө.
   return (
     <div
       role="button"
       tabIndex={0}
+      draggable={draggable}
+      onDragStart={(event) => {
+        // Firefox чирэхийн тулд dataTransfer-т ямар нэг утга шаарддаг
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", appointment.id);
+        const rect = event.currentTarget.getBoundingClientRect();
+        onDragStart(appointment, (event.clientY - rect.top) / pxPerMin);
+      }}
+      onDragEnd={onDragEnd}
       onClick={() => onOpen(appointment)}
       onKeyDown={(event) => {
+        // Дотор нь товч байгаа тул зөвхөн блок өөрөө сонгогдсон үед нээнэ
+        if (event.target !== event.currentTarget) return;
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           onOpen(appointment);
         }
       }}
-      title={`${appointment.client.name} · ${formatMinutes(startMin)}–${formatMinutes(endMin)} · ${appointment.items.map((i) => i.name).join(", ")}${grouped ? " · хамтарсан захиалга" : ""}${moneyMark ? ` · ${moneyMark.title}` : ""}`}
-      className={`group/appt absolute cursor-pointer overflow-hidden rounded-lg pl-3.5 pr-2.5 text-left shadow-[0_1px_2px_rgba(34,32,29,0.06)] ring-1 ring-inset ring-sand-900/5 transition duration-150 hover:z-10 hover:shadow-md focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/50 ${
-        compact ? "py-1" : "py-2"
-      } ${noShow ? "hatched" : ""}`}
+      title={`${appointment.client.name} · ${formatMinutes(startMin)}–${formatMinutes(endMin)} · ${appointment.items.map((i) => i.name).join(", ")}${grouped ? " · хамтарсан захиалга" : ""}${moneyMark ? ` · ${moneyMark.title}` : ""}${draggable ? " · чирж өөр мастер эсвэл цаг руу зөөнө" : ""}`}
+      className={`group/appt absolute overflow-hidden rounded-lg pl-2 pr-1.5 text-left md:pl-3.5 md:pr-2.5 shadow-[0_1px_2px_rgba(34,32,29,0.06)] ring-1 ring-inset ring-sand-900/5 transition duration-150 hover:z-10 hover:shadow-md focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/50 ${
+        draggable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
+      } ${tiny ? "py-0.5" : compact ? "py-1" : "py-2"} ${
+        noShow ? "hatched" : ""
+      }`}
       style={{
-        top: (startMin - rangeStart) * PX_PER_MIN + 2,
-        height: Math.max(duration * PX_PER_MIN - 4, 22),
+        top: (startMin - rangeStart) * pxPerMin + 2,
+        height,
         left: `calc(${column * width}% + 4px)`,
         width: `calc(${width}% - 8px)`,
         backgroundColor: tint(color, cancelled ? 5 : 10),
-        opacity: cancelled ? 0.65 : 1,
+        opacity: isDragging ? 0.35 : cancelled ? 0.65 : 1,
       }}
     >
       {/* Зүүн талын өнгөт зурвас */}
@@ -647,33 +1147,57 @@ function AppointmentBlock({
         </span>
       ) : null}
 
-      <p
-        className="truncate font-mono text-[10.5px] tabular-nums opacity-90"
-        style={{ color }}
-      >
-        {formatMinutes(startMin)}–{formatMinutes(endMin)}
-      </p>
-      <p
-        className={`truncate text-sm font-semibold text-sand-900 ${
-          cancelled ? "line-through" : ""
-        }`}
-      >
-        {grouped ? (
+      {tiny ? (
+        /* Багтахгүй болохоор цагийн эхлэл ба нэрийг нэг мөрөнд */
+        <p
+          className={`truncate text-[11px] font-semibold leading-tight text-sand-900 ${
+            moneyMark ? "pr-4" : ""
+          } ${cancelled ? "line-through" : ""}`}
+        >
           <span
-            aria-hidden
-            title="Хамтарсан захиалга — өөр ажилтан зэрэг үйлчилж байна"
-            className="mr-1 text-sand-500"
+            className="mr-1 font-mono text-[10px] font-normal tabular-nums"
+            style={{ color }}
           >
-            ⇄
+            {formatMinutes(startMin)}
           </span>
-        ) : null}
-        {appointment.client.name}
-      </p>
-      {!compact ? (
-        <p className="truncate text-[13px]" style={{ color }}>
-          {appointment.items.map((item) => item.name).join(", ")}
+          {grouped ? (
+            <span aria-hidden className="mr-0.5 text-sand-500">
+              ⇄
+            </span>
+          ) : null}
+          {appointment.client.name}
         </p>
-      ) : null}
+      ) : (
+        <>
+          <p
+            className="truncate font-mono text-[9.5px] tabular-nums opacity-90 md:text-[10.5px]"
+            style={{ color }}
+          >
+            {formatMinutes(startMin)}–{formatMinutes(endMin)}
+          </p>
+          <p
+            className={`truncate text-[12px] font-semibold text-sand-900 md:text-sm ${
+              cancelled ? "line-through" : ""
+            }`}
+          >
+            {grouped ? (
+              <span
+                aria-hidden
+                title="Хамтарсан захиалга — өөр ажилтан зэрэг үйлчилж байна"
+                className="mr-1 text-sand-500"
+              >
+                ⇄
+              </span>
+            ) : null}
+            {appointment.client.name}
+          </p>
+          {!compact ? (
+            <p className="truncate text-[11px] md:text-[13px]" style={{ color }}>
+              {appointment.items.map((item) => item.name).join(", ")}
+            </p>
+          ) : null}
+        </>
+      )}
 
       {/*
         Захиалгын мэдээллийг хуулах — үйлчлүүлэгч рүү баталгаажуулалт илгээхэд.
@@ -682,15 +1206,46 @@ function AppointmentBlock({
         Богино (22px) блокт багтахгүй тул зөвхөн өндөр блокт гаргана —
         тэнд захиалгын цонхноос хуулж болно.
       */}
-      {!compact ? (
-        <span className="absolute bottom-1 right-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/appt:opacity-100 max-md:opacity-100">
-          <CopyButton
-            compact
-            label=""
-            title="Захиалгын мэдээллийг хуулах"
-            getText={() => copyTextFor(appointment)}
-            className="flex size-6 items-center justify-center rounded-md border border-sand-300 bg-white/95 text-sand-600 shadow-sm transition hover:bg-sand-100 hover:text-sand-900"
-          />
+      {!tiny && (!compact || draggable) ? (
+        <span className="absolute bottom-1 right-1 flex gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/appt:opacity-100 max-md:opacity-100">
+          {!compact ? (
+            <CopyButton
+              compact
+              label=""
+              title="Захиалгын мэдээллийг хуулах"
+              getText={() => copyTextFor(appointment)}
+              className="flex size-5 items-center justify-center rounded-md border border-sand-300 bg-white/95 text-sand-600 shadow-sm transition hover:bg-sand-100 hover:text-sand-900 md:size-6"
+            />
+          ) : null}
+
+          {/*
+            Нэг товчоор цуцлах — цаг нь тэр даруй сул болно. Андуурсан бол
+            хуанлийн дээд талын мэдэгдлээс «Буцаах».
+          */}
+          {draggable ? (
+            <button
+              type="button"
+              title="Цуцлах — энэ цаг сул болно"
+              aria-label={`${appointment.client.name} — захиалгыг цуцлах`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onCancel(appointment);
+              }}
+              className="flex size-5 items-center justify-center rounded-md border border-sand-300 bg-white/95 text-sand-600 shadow-sm transition hover:border-danger-200 hover:bg-danger-50 hover:text-danger-700 md:size-6"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className="size-3.5"
+                aria-hidden
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+              >
+                <path d="M6 6 18 18M18 6 6 18" />
+              </svg>
+            </button>
+          ) : null}
         </span>
       ) : null}
     </div>
@@ -729,10 +1284,12 @@ function CurrentTimeLine({
   dateKey,
   rangeStart,
   rangeEnd,
+  pxPerMin,
 }: {
   dateKey: string;
   rangeStart: number;
   rangeEnd: number;
+  pxPerMin: number;
 }) {
   const now = useSyncExternalStore(
     subscribeToClock,
@@ -747,8 +1304,8 @@ function CurrentTimeLine({
 
   return (
     <div
-      className="pointer-events-none absolute inset-x-0 z-10 flex items-center pl-[51px] md:pl-[71px]"
-      style={{ top: (minutes - rangeStart) * PX_PER_MIN }}
+      className="pointer-events-none absolute inset-x-0 z-10 flex items-center pl-[31px] md:pl-[71px]"
+      style={{ top: (minutes - rangeStart) * pxPerMin }}
     >
       <span className="size-[9px] shrink-0 rounded-full bg-rose-400" />
       <span className="h-px flex-1 bg-rose-400" />

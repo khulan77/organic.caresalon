@@ -465,6 +465,118 @@ export async function updateAppointment(
 }
 
 /**
+ * Хуанли дээр чирж зөөх — өөр ажилтан руу, эсвэл өөр цаг руу.
+ *
+ * Үйлчилгээ, үнэ, төлбөрт ХҮРЭХГҮЙ: зөвхөн ХЭН, ХЭЗЭЭ гэдгийг л өөрчилнө.
+ * Хамтарсан захиалгын цаг бүлгээрээ хөдөлнө (зэрэг эхэлж зэрэг дуусах ёстой),
+ * ажилтан нь зөвхөн чирсэн мөрөнд солигдоно.
+ */
+export async function moveAppointment(input: {
+  appointmentId: string;
+  staffId: string;
+  dateKey: string;
+  startMin: number;
+}): Promise<ActionResult> {
+  const user = await getActionUser();
+
+  if (!input.staffId) return { ok: false, issues: ["Ажилтан олдсонгүй."] };
+  if (!isDateKey(input.dateKey)) return { ok: false, issues: ["Огноо буруу байна."] };
+  if (
+    !Number.isInteger(input.startMin) ||
+    input.startMin < 0 ||
+    input.startMin >= 24 * 60
+  ) {
+    return { ok: false, issues: ["Эхлэх цаг буруу байна."] };
+  }
+
+  const appointment = await prisma.appointment.findUnique({
+    where: { id: input.appointmentId },
+    select: {
+      id: true,
+      branchId: true,
+      staffId: true,
+      groupId: true,
+      startAt: true,
+      endAt: true,
+      status: true,
+    },
+  });
+  if (!appointment) return { ok: false, issues: ["Захиалга олдсонгүй."] };
+  if (!canWriteBranch(user, appointment.branchId)) {
+    return { ok: false, issues: [BRANCH_WRITE_DENIED] };
+  }
+
+  // Цуцлагдсан мөрийг зөөвөл идэвхтэй захиалгын цаг руу чимээгүй давхцана —
+  // эхлээд төлөвийг нь сэргээх шаардлагатай.
+  if (appointment.status === "CANCELLED" || appointment.status === "NO_SHOW") {
+    return {
+      ok: false,
+      issues: [
+        "Цуцлагдсан захиалгыг чирж зөөх боломжгүй. Эхлээд төлөвийг нь сэргээнэ үү.",
+      ],
+    };
+  }
+
+  const durationMin = Math.round(
+    (appointment.endAt.getTime() - appointment.startAt.getTime()) / 60_000,
+  );
+
+  const group = appointment.groupId
+    ? await prisma.appointment.findMany({
+        where: { groupId: appointment.groupId },
+        select: { id: true, staffId: true },
+      })
+    : [{ id: appointment.id, staffId: appointment.staffId }];
+
+  // Бүлгийн хоёр мөр нэг ажилтанд ногдож болохгүй — тэр хүн өөртэйгөө давхцана
+  if (
+    group.some((row) => row.id !== appointment.id && row.staffId === input.staffId)
+  ) {
+    return {
+      ok: false,
+      issues: ["Энэ ажилтан уг хамтарсан захиалгад аль хэдийн орсон байна."],
+    };
+  }
+
+  const rows = group.map((row) => ({
+    id: row.id,
+    staffId: row.id === appointment.id ? input.staffId : row.staffId,
+  }));
+
+  const issues = await validateGroup({
+    branchId: appointment.branchId,
+    dateKey: input.dateKey,
+    startMin: input.startMin,
+    durationMin,
+    staffIds: rows.map((row) => row.staffId),
+    excludeAppointmentIds: rows.map((row) => row.id),
+  });
+  if (issues.length > 0) return { ok: false, issues };
+
+  const startAt = localToUtc(input.dateKey, input.startMin);
+  const endAt = new Date(startAt.getTime() + durationMin * 60_000);
+
+  try {
+    await prisma.$transaction(
+      rows.map((row) =>
+        prisma.appointment.update({
+          where: { id: row.id },
+          data: { staffId: row.staffId, startAt, endAt },
+        }),
+      ),
+    );
+  } catch (error) {
+    if (isOverlapConstraintError(error)) {
+      return { ok: false, issues: [OVERLAP_MESSAGE] };
+    }
+    throw error;
+  }
+
+  refresh();
+  return { ok: true };
+}
+
+/**
  * Захиалгын төлөв солих (ирсэн, дууссан, цуцалсан гэх мэт).
  * Хамтарсан захиалга бол бүлгийн БҮХ мөр хамт солигдоно — нэг үйлчлүүлэгчийн
  * нэг ирэлт хоёр өөр төлөвт байж болохгүй.
