@@ -97,6 +97,14 @@ type Props = {
 /** Цаг сонголтын алхам — 30 минут. */
 const SLOT_STEP = 30;
 
+/**
+ * Үргэлжлэх хугацааны бэлэн сонголтууд.
+ *
+ * Жагсаалтын хугацаа зөвхөн тооцоолол: нэг цагийн хоёр маникурыг мастер цаг
+ * хагаст багтааж болно. Ресепшн бодит хугацааг нь энд шууд тавина.
+ */
+const DURATION_PRESETS = [30, 60, 90, 120, 150, 180, 240];
+
 /** 00:00–23:30 хүртэлх 30 минутын цагууд. */
 const START_TIMES = Array.from(
   { length: (24 * 60) / SLOT_STEP },
@@ -201,6 +209,35 @@ export function AppointmentDialog({
   const totalDuration = [...durationByStaff.values()].reduce(
     (max, value) => Math.max(max, value),
     0,
+  );
+
+  /**
+   * ГАРААР тохируулсан үргэлжлэх хугацаа — `null` бол үйлчилгээгээр бодно.
+   *
+   * Засварлах үед: хадгалагдсан урт нь жагсаалтын хугацаанаас зөрж байвал
+   * хэн нэгэн зориуд тохируулсан гэсэн үг тул түүнийг барина.
+   */
+  const [durationOverride, setDurationOverride] = useState<number | null>(
+    () => {
+      if (!editing) return null;
+      const actual = Math.round(
+        (editing.endAt.getTime() - editing.startAt.getTime()) / 60_000,
+      );
+      return actual > 0 && actual !== totalDuration ? actual : null;
+    },
+  );
+
+  /** Захиалгын бодит урт — цаг, сул цаг, дуусах цаг бүгд үүгээр тооцогдоно. */
+  const effectiveDuration = durationOverride ?? totalDuration;
+
+  /**
+   * ДАВХАР ЗАХИАЛГА — завгүй цаг дээр зориуд бүртгэнэ.
+   *
+   * Мастер нэг зэрэг хоёр үйлчлүүлэгч хөтөлдөг тохиолдолд л. Асаахад завгүй
+   * цагууд ч сул цагийн жагсаалтад гарч ирнэ.
+   */
+  const [allowOverlap, setAllowOverlap] = useState(
+    editing?.allowOverlap ?? false,
   );
 
   /** Хэдэн ажилтан оролцож байгаа — хуваарилалтын хэсгийг харуулах эсэхэд. */
@@ -333,7 +370,7 @@ export function AppointmentDialog({
   const slotStaffIds =
     involvedStaffIds.length > 0 ? involvedStaffIds : [primaryStaffId];
   /** Үйлчилгээ сонгоогүй байхад ч сул цаг харагдана — нэг нүдээр хэмжинэ. */
-  const slotDuration = totalDuration > 0 ? totalDuration : SLOT_STEP;
+  const slotDuration = effectiveDuration > 0 ? effectiveDuration : SLOT_STEP;
   const slotStaffNames = slotStaffIds
     .map((id) => staff.find((member) => member.id === id)?.name ?? "—")
     .join(", ");
@@ -371,6 +408,7 @@ export function AppointmentDialog({
     [...slotStaffIds].sort().join(","),
     slotDuration,
     slotStep,
+    allowOverlap ? "1" : "0",
     siblings.map((sibling) => sibling.id).join(","),
   ].join("|");
 
@@ -381,7 +419,7 @@ export function AppointmentDialog({
 
   useEffect(() => {
     if (!canWrite) return;
-    const [branchId, day, staffIds, duration, step, exclude] =
+    const [branchId, day, staffIds, duration, step, overlap, exclude] =
       slotKey.split("|");
 
     let active = true;
@@ -394,6 +432,7 @@ export function AppointmentDialog({
         staffIds: staffIds.split(","),
         durationMin: Number(duration),
         stepMin: Number(step),
+        allowOverlap: overlap === "1",
         excludeAppointmentIds: exclude ? exclude.split(",") : [],
         rejectPastTime: mode === "create",
       })
@@ -776,6 +815,81 @@ export function AppointmentDialog({
             </section>
 
             {/*
+              Үргэлжлэх хугацаа ба давхар захиалга.
+
+              Хоёулаа сул цагийн жагсаалтад шууд нөлөөлдөг тул цаг сонгохын
+              ӨМНӨ байрлана: эхлээд «хэр удах», дараа нь «хэдэн цагт».
+            */}
+            <section>
+              {durationOverride ? (
+                <input
+                  type="hidden"
+                  name="durationMin"
+                  value={durationOverride}
+                />
+              ) : null}
+              {allowOverlap ? (
+                <input type="hidden" name="allowOverlap" value="on" />
+              ) : null}
+
+              <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3">
+                <SectionTitle>Үргэлжлэх хугацаа</SectionTitle>
+                {durationOverride && totalDuration > 0 ? (
+                  <span className="mb-2 text-xs text-sand-500">
+                    жагсаалтаар {formatDuration(totalDuration)}
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setDurationOverride(null)}
+                  aria-pressed={durationOverride === null}
+                  className={presetClass(durationOverride === null)}
+                >
+                  Автомат
+                  {totalDuration > 0 ? ` · ${formatDuration(totalDuration)}` : ""}
+                </button>
+
+                {DURATION_PRESETS.map((minutes) => (
+                  <button
+                    key={minutes}
+                    type="button"
+                    onClick={() => setDurationOverride(minutes)}
+                    aria-pressed={durationOverride === minutes}
+                    className={presetClass(durationOverride === minutes)}
+                  >
+                    {formatDuration(minutes)}
+                  </button>
+                ))}
+
+                {/* Жагсаалтад байхгүй урт (жишээ нь 45м) — хадгалагдсаныг нуухгүй */}
+                {durationOverride && !DURATION_PRESETS.includes(durationOverride) ? (
+                  <span className={presetClass(true)}>
+                    {formatDuration(durationOverride)}
+                  </span>
+                ) : null}
+              </div>
+
+              <label className="mt-3 flex items-start gap-2 text-sm text-sand-700">
+                <input
+                  type="checkbox"
+                  checked={allowOverlap}
+                  onChange={(event) => setAllowOverlap(event.target.checked)}
+                  className="mt-0.5 size-4 shrink-0 rounded border-sand-400 text-brand-600 focus:ring-brand-500/30"
+                />
+                <span className="min-w-0">
+                  Давхар захиалга
+                  <span className="block text-xs text-sand-500">
+                    Мастер зэрэг хоёр үйлчлүүлэгч хөтлөх үед — завгүй цаг дээр ч
+                    бүртгэнэ. Ажлын цаг, чөлөө нь хэвээр шалгагдана.
+                  </span>
+                </span>
+              </label>
+            </section>
+
+            {/*
               Эхлэх цаг — задгай жагсаалт биш, ТУХАЙН АЖИЛТНЫ СУЛ ЦАГУУД.
               Ээлж, чөлөө, бусад захиалгыг хассан цагууд л энд гарна: ресепшн
               завгүй цаг сонгоод алдаа идэх шаардлагагүй болно.
@@ -844,7 +958,9 @@ export function AppointmentDialog({
                     <span>
                       {startTaken
                         ? "Сонгосон цаг багтахаа больжээ — сул цагаас сонгоно уу."
-                        : `${slots.length} сул цаг · ${formatDuration(slotStep)} зайтай`}
+                        : allowOverlap
+                          ? `${slots.length} цаг · давхар захиалга тул завгүй цаг ч орсон`
+                          : `${slots.length} сул цаг · ${formatDuration(slotStep)} зайтай`}
                     </span>
                     <button
                       type="button"
@@ -922,13 +1038,13 @@ export function AppointmentDialog({
               </section>
             ) : null}
 
-            {totalDuration > 0 ? (
+            {effectiveDuration > 0 ? (
               <p className="rounded-lg bg-sand-100/70 px-3 py-2 text-sm text-sand-600">
                 Дуусах цаг:{" "}
                 <strong className="tabular-nums text-sand-900">
-                  {formatMinutes(startMin + totalDuration)}
+                  {formatMinutes(startMin + effectiveDuration)}
                 </strong>{" "}
-                (нийт {formatDuration(totalDuration)}
+                (нийт {formatDuration(effectiveDuration)}
                 {involvedStaffIds.length > 1
                   ? `, ${involvedStaffIds.length} ажилтан зэрэг`
                   : ""}
@@ -1661,6 +1777,15 @@ function PaymentSection({
       </div>
     </section>
   );
+}
+
+/** Хугацааны сонголтын товчны хэв маяг — «Хэр удаан» хэсэгтэй нэг загвар. */
+function presetClass(active: boolean): string {
+  return `rounded-xl border px-3 py-1.5 text-sm transition active:scale-[0.98] ${
+    active
+      ? "border-brand-600 bg-brand-50 font-medium text-brand-700"
+      : "border-sand-300 text-sand-700 hover:bg-sand-50"
+  }`;
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {

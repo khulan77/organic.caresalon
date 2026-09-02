@@ -26,6 +26,9 @@ import {
  */
 export const MAX_BOOKING_DAYS = 365;
 
+/** Нэг захиалга хамгийн ихдээ хэдэн минут үргэлжлэх вэ — буруу оруулалтын хамгаалалт. */
+export const MAX_DURATION_MIN = 12 * 60;
+
 /**
  * Өнгөрсөн цаг руу ШИНЭ захиалга бүртгэхийг хэдэн минутаар өршөөх вэ.
  *
@@ -54,6 +57,14 @@ export type SlotInput = {
    * өглөө болсон захиалгыг үдээс хойш засах нь хэвийн ажил.
    */
   rejectPastTime?: boolean;
+  /**
+   * ДАВХАР ЗАХИАЛГА — өөр захиалгатай давхцахыг зөвшөөрнө.
+   *
+   * Зөвхөн 7 дахь шалгалтыг (өөр захиалгатай давхцах) унтраана. Салбарын
+   * ажлын цаг, ажилтны ээлж, чөлөө нь ХЭВЭЭР хүчинтэй — «завгүй» гэдэг нь
+   * «ажилладаггүй» гэсэн үг биш.
+   */
+  allowOverlap?: boolean;
 };
 
 export type SlotIssue = { code: string; message: string };
@@ -204,6 +215,8 @@ export async function validateSlot(input: SlotInput): Promise<SlotIssue[]> {
   }
 
   // 7. Өөр захиалгатай давхцах эсэх — [эхлэл, төгсгөл) нээлттэй муж
+  if (input.allowOverlap) return issues;
+
   const startAt = localToUtc(dateKey, startMin);
   const endAt = localToUtc(dateKey, endMin);
 
@@ -211,6 +224,9 @@ export async function validateSlot(input: SlotInput): Promise<SlotIssue[]> {
     where: {
       staffId,
       status: { in: ACTIVE_STATUSES },
+      // Давхар гэж тэмдэглэсэн захиалга хэнийг ч хаахгүй — сангийн
+      // хязгаарлалт ч түүнийг индексэд оруулдаггүй, хоёулаа нэг дүрэмтэй.
+      allowOverlap: false,
       startAt: { lt: endAt },
       endAt: { gt: startAt },
       ...(() => {
@@ -283,6 +299,8 @@ export async function findFreeStartTimes(input: {
   excludeAppointmentIds?: string[];
   /** Зөвхөн ШИНЭ захиалгад — өнгөрсөн цагийг санал болгохгүй */
   rejectPastTime?: boolean;
+  /** Давхар захиалга — завгүй цагийг ч санал болгоно */
+  allowOverlap?: boolean;
 }): Promise<FreeSlots> {
   const { branchId, dateKey, durationMin } = input;
   const staffIds = [...new Set(input.staffIds)].filter(Boolean);
@@ -373,7 +391,7 @@ export async function findFreeStartTimes(input: {
         startMin: off.startMin ?? 0,
         endMin: off.endMin ?? 24 * 60,
       })),
-      ...busy
+      ...(input.allowOverlap ? [] : busy)
         .filter((appt) => appt.staffId === member.id)
         .map((appt) => ({
           // Шөнө дундыг давсан захиалгыг тухайн өдрийн мужид хумина
@@ -409,7 +427,9 @@ export async function findFreeStartTimes(input: {
     reason:
       slots.length > 0
         ? null
-        : `Энэ өдөр ${formatDuration(durationMin)} багтах сул цаг үлдээгүй байна.`,
+        : input.allowOverlap
+          ? `${formatDuration(durationMin)} багтах цаг ажлын хуваарьт алга байна.`
+          : `Энэ өдөр ${formatDuration(durationMin)} багтах сул цаг үлдээгүй байна.`,
   };
 }
 
@@ -433,6 +453,14 @@ export async function resolveBooking(input: {
   serviceStaffIds?: string[];
   /** Үндсэн ажилтан — хуваарилагдаагүй үйлчилгээ бүгд түүнд очно. */
   primaryStaffId: string;
+  /**
+   * Захиалгын БОДИТ үргэлжлэх хугацаа, минутаар.
+   *
+   * Жагсаалтын хугацаа зөвхөн ТООЦООЛОЛ: нэг цагийн хоёр маникурыг мастер
+   * цаг хагаст багтаадаг, эсрэгээрээ удаж ч болно. Өгвөл захиалгын төгсгөл
+   * үүгээр тогтоно, үйлчилгээ тус бүрийн хугацаа түүхэндээ хэвээр үлдэнэ.
+   */
+  durationOverride?: number | null;
 }) {
   // Давхардлыг арилгаж, оруулсан дарааллыг хадгална
   const orderedIds = [...new Set(input.serviceIds)];
@@ -532,10 +560,16 @@ export async function resolveBooking(input: {
    * Зэрэг эхэлж зэрэг дуусах тул бүх багана ижил өндөртэй харагдана —
    * богино үйлчилгээтэй ажилтны цаг ч бүлгийн төгсгөл хүртэл эзлэгдэнэ.
    */
-  const totalDuration = ordered.reduce(
+  const computedDuration = ordered.reduce(
     (max, group) => Math.max(max, group.durationMin),
     0,
   );
+
+  const override = input.durationOverride;
+  const totalDuration =
+    override && Number.isInteger(override) && override > 0
+      ? Math.min(override, MAX_DURATION_MIN)
+      : computedDuration;
 
   const groups = ordered.map((group, index) => {
     // Нэмэлт төлбөр бүхэлдээ үндсэн мөрөнд — материалын зардал хуваагдахгүй
@@ -557,5 +591,7 @@ export async function resolveBooking(input: {
     extraTotal,
     totalPrice: subtotal + extraTotal,
     totalDuration,
+    /** Үйлчилгээний жагсаалтаар бодвол хэдэн минут болох — харьцуулахад */
+    computedDuration,
   };
 }

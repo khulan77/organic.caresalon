@@ -10,6 +10,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import {
   findFreeStartTimes,
+  MAX_DURATION_MIN,
   resolveBooking,
   validateSlot,
   type FreeSlots,
@@ -72,6 +73,24 @@ async function readSlotForm(formData: FormData) {
   const note = String(formData.get("note") ?? "").trim() || null;
   const serviceIds = formData.getAll("serviceIds").map(String).filter(Boolean);
 
+  /**
+   * Гараар тохируулсан үргэлжлэх хугацаа. Хоосон бол үйлчилгээнүүдийн
+   * жагсаалтын хугацаагаар бодогдоно.
+   */
+  const rawDuration = String(formData.get("durationMin") ?? "").trim();
+  const durationMin = rawDuration ? Number(rawDuration) : null;
+  if (
+    durationMin !== null &&
+    (!Number.isInteger(durationMin) ||
+      durationMin <= 0 ||
+      durationMin > MAX_DURATION_MIN)
+  ) {
+    issues.push("Үргэлжлэх хугацаа буруу байна.");
+  }
+
+  /** Давхар захиалга — завгүй цаг дээр зориуд бүртгэх. */
+  const allowOverlap = formData.get("allowOverlap") === "on";
+
   if (!branchId) issues.push("Салбар сонгогдоогүй байна.");
   if (!staffId) issues.push("Ажилтан сонгоно уу.");
   if (!isDateKey(dateKey)) issues.push("Огноо буруу байна.");
@@ -88,6 +107,8 @@ async function readSlotForm(formData: FormData) {
     staffId,
     dateKey,
     startMin: hour * 60 + minute,
+    durationMin,
+    allowOverlap,
     note,
     serviceIds,
     serviceStaffIds: formData.getAll("serviceStaffId").map(String),
@@ -111,6 +132,8 @@ async function validateGroup(input: {
   excludeAppointmentIds?: string[];
   /** Зөвхөн ШИНЭ захиалгад — өнгөрсөн цагийг хориглоно */
   rejectPastTime?: boolean;
+  /** Давхар захиалга — өөр захиалгатай давхцахыг зөвшөөрнө */
+  allowOverlap?: boolean;
 }): Promise<string[]> {
   const results = await Promise.all(
     input.staffIds.map((staffId) =>
@@ -122,6 +145,7 @@ async function validateGroup(input: {
         durationMin: input.durationMin,
         excludeAppointmentIds: input.excludeAppointmentIds,
         rejectPastTime: input.rejectPastTime,
+        allowOverlap: input.allowOverlap,
       }),
     ),
   );
@@ -190,6 +214,7 @@ export async function createAppointment(
       serviceStaffIds: form.serviceStaffIds,
       primaryStaffId: form.staffId,
       charges: form.charges,
+      durationOverride: form.durationMin,
     });
   } catch (error) {
     return {
@@ -207,6 +232,7 @@ export async function createAppointment(
     staffIds: resolved.groups.map((group) => group.staffId),
     // Өнгөрсөн цагт ШИНЭ захиалга орохгүй
     rejectPastTime: true,
+    allowOverlap: form.allowOverlap,
   });
   if (issues.length > 0) return { ok: false, issues };
 
@@ -247,6 +273,7 @@ export async function createAppointment(
             endAt,
             note: form.note,
             groupId,
+            allowOverlap: form.allowOverlap,
             isPrimary: group.isPrimary,
             subtotal: group.subtotal,
             extraTotal: group.extraTotal,
@@ -364,6 +391,7 @@ export async function updateAppointment(
       serviceStaffIds: form.serviceStaffIds,
       primaryStaffId: form.staffId,
       charges: form.charges,
+      durationOverride: form.durationMin,
     });
   } catch (error) {
     return {
@@ -379,6 +407,7 @@ export async function updateAppointment(
     durationMin: resolved.totalDuration,
     staffIds: resolved.groups.map((group) => group.staffId),
     excludeAppointmentIds: siblingIds,
+    allowOverlap: form.allowOverlap,
   });
   if (issues.length > 0) return { ok: false, issues };
 
@@ -413,6 +442,7 @@ export async function updateAppointment(
           endAt,
           note: form.note,
           groupId,
+          allowOverlap: form.allowOverlap,
           isPrimary: true,
           subtotal: first.subtotal,
           extraTotal: first.extraTotal,
@@ -445,6 +475,7 @@ export async function updateAppointment(
             endAt,
             note: form.note,
             groupId,
+            allowOverlap: form.allowOverlap,
             isPrimary: false,
             subtotal: group.subtotal,
             extraTotal: 0,
@@ -805,6 +836,8 @@ export async function freeStartTimes(input: {
   stepMin?: number;
   excludeAppointmentIds?: string[];
   rejectPastTime?: boolean;
+  /** Давхар захиалга — завгүй цагийг ч санал болгоно */
+  allowOverlap?: boolean;
 }): Promise<FreeSlots> {
   await getActionUser();
 
@@ -820,5 +853,6 @@ export async function freeStartTimes(input: {
     stepMin: input.stepMin,
     excludeAppointmentIds: input.excludeAppointmentIds,
     rejectPastTime: input.rejectPastTime,
+    allowOverlap: input.allowOverlap,
   });
 }
