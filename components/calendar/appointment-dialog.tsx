@@ -32,9 +32,17 @@ import {
   settleAppointment,
   updateAppointment,
 } from "@/app/(app)/calendar/actions";
-import { PAYMENT_STATE_LABELS, summarize } from "@/lib/payments";
+import {
+  PAYMENT_METHOD_CHOICES,
+  PAYMENT_METHOD_LABELS,
+  PAYMENT_STATE_LABELS,
+  summarize,
+} from "@/lib/payments";
 import type { ActionResult } from "@/lib/action-result";
-import type { AppointmentStatus } from "@/lib/generated/prisma/enums";
+import type {
+  AppointmentStatus,
+  PaymentMethod,
+} from "@/lib/generated/prisma/enums";
 import { addTimeOff } from "@/app/(app)/staff/actions";
 import { Field, Issues, inputClass } from "@/components/ui/form";
 import { CopyButton } from "@/components/ui/copy-button";
@@ -262,6 +270,8 @@ export function AppointmentDialog({
   const [paidInFull, setPaidInFull] = useState(false);
   /** Урьдчилж авсан дүн — «төлсөн» биш үед л хэрэглэнэ. */
   const [deposit, setDeposit] = useState("");
+  /** Урьдчилгаа / бүтэн төлөлтийг ямар хэлбэрээр авсан. */
+  const [depositMethod, setDepositMethod] = useState<PaymentMethod>("CASH");
 
   /**
    * Хурдан цуцлалт — цонх нээмэгц доод мөрөнд томоор харагдана.
@@ -841,6 +851,11 @@ export function AppointmentDialog({
                       : Number(deposit.replace(/\D/g, "")) || 0
                   }
                 />
+                <input
+                  type="hidden"
+                  name="depositMethod"
+                  value={depositMethod}
+                />
 
                 <button
                   type="button"
@@ -878,11 +893,17 @@ export function AppointmentDialog({
                 </button>
 
                 {paidInFull ? (
-                  <p className="mt-1.5 text-center text-[11px] text-sand-500">
-                    Захиалга үүсэхэд бүтэн төлбөр бүртгэгдэнэ.
-                  </p>
-                ) : (
                   <div className="mt-3 border-t border-sand-100 pt-3">
+                    <MethodPicker
+                      value={depositMethod}
+                      onChange={setDepositMethod}
+                    />
+                    <p className="mt-1.5 text-[11px] text-sand-500">
+                      Захиалга үүсэхэд бүтэн төлбөр бүртгэгдэнэ.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="mt-3 space-y-2 border-t border-sand-100 pt-3">
                     <label className="mb-1 block text-xs text-sand-500">
                       Урьдчилгаа авсан бол (заавал биш)
                     </label>
@@ -902,6 +923,12 @@ export function AppointmentDialog({
                         ₮
                       </span>
                     </div>
+                    {Number(deposit.replace(/\D/g, "")) > 0 ? (
+                      <MethodPicker
+                        value={depositMethod}
+                        onChange={setDepositMethod}
+                      />
+                    ) : null}
                   </div>
                 )}
               </section>
@@ -1191,6 +1218,48 @@ function Row({
   );
 }
 
+
+function MethodPicker({
+  value,
+  onChange,
+  label = "Төлбөрийн хэлбэр",
+}: {
+  value: PaymentMethod;
+  onChange: (method: PaymentMethod) => void;
+  label?: string;
+}) {
+  return (
+    <div>
+      <span className="mb-1 block text-xs text-sand-500">{label}</span>
+      <div
+        role="radiogroup"
+        aria-label={label}
+        className="inline-flex items-center gap-1 rounded-full bg-sand-200/70 p-1"
+      >
+        {PAYMENT_METHOD_CHOICES.map((method) => {
+          const active = value === method;
+          return (
+            <button
+              key={method}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              onClick={() => onChange(method)}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                active
+                  ? "bg-white text-sand-900 shadow-sm"
+                  : "text-sand-500 hover:text-sand-800"
+              }`}
+            >
+              {PAYMENT_METHOD_LABELS[method]}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /**
  * Төлбөрийн хэсэг — бүртгэсэн төлбөрүүд ба шинээр авах талбар.
  *
@@ -1214,6 +1283,7 @@ function PaymentSection({
   >(addPayment, null);
 
   const [amount, setAmount] = useState("");
+  const [method, setMethod] = useState<PaymentMethod>("CASH");
   const [isDeposit, setIsDeposit] = useState(false);
   const [isRemoving, startRemove] = useTransition();
   const [isSettling, startSettle] = useTransition();
@@ -1235,6 +1305,7 @@ function PaymentSection({
     const data = new FormData();
     data.set("appointmentId", appointmentId);
     data.set("amount", amount);
+    data.set("method", method);
     if (isDeposit) data.set("isDeposit", "on");
     startTransition(() => formAction(data));
   }
@@ -1243,7 +1314,8 @@ function PaymentSection({
   function settle() {
     setSettleError(null);
     startSettle(async () => {
-      const outcome = await settleAppointment(appointmentId, "CASH");
+      // Сонгосон хэлбэрээр бүртгэнэ — өдрийн эцсийн задаргаа зөв гарна
+      const outcome = await settleAppointment(appointmentId, method);
       if (!outcome.ok) setSettleError(outcome.issues.join(" "));
     });
   }
@@ -1284,6 +1356,9 @@ function PaymentSection({
               <span className="w-24 shrink-0 tabular-nums font-medium text-sand-900">
                 {formatPrice(payment.amount)}
               </span>
+              <span className="shrink-0 rounded bg-sand-100 px-1.5 py-0.5 text-[11px] font-medium text-sand-600">
+                {PAYMENT_METHOD_LABELS[payment.method]}
+              </span>
               {payment.isDeposit ? (
                 <span className="shrink-0 rounded bg-sand-200 px-1.5 py-0.5 text-[11px] text-sand-700">
                   урьдчилгаа
@@ -1315,6 +1390,9 @@ function PaymentSection({
       {/* ── Нэг товчоор бүтэн төлөлт ── */}
       {due > 0 ? (
         <div className="mb-3 border-t border-sand-100 pt-3">
+          <div className="mb-2">
+            <MethodPicker value={method} onChange={setMethod} />
+          </div>
           <button
             type="button"
             onClick={settle}
@@ -1333,7 +1411,9 @@ function PaymentSection({
             >
               <path d="m5 13 4 4L19 7" />
             </svg>
-            {isSettling ? "Бүртгэж байна…" : `Төлсөн · ${formatPrice(due)}`}
+            {isSettling
+              ? "Бүртгэж байна…"
+              : `${PAYMENT_METHOD_LABELS[method]}-ээр төлсөн · ${formatPrice(due)}`}
           </button>
           <p className="mt-1.5 text-center text-[11px] text-sand-500">
             Үлдэгдлийг бүтнээр төлөгдсөнд тооцно.
@@ -1348,6 +1428,9 @@ function PaymentSection({
 
       {/* ── Шинэ төлбөр ── */}
       <div className="space-y-2 border-t border-sand-100 pt-3">
+        {due <= 0 ? (
+          <MethodPicker value={method} onChange={setMethod} />
+        ) : null}
         <div className="relative sm:max-w-[13rem]">
           <input
             type="number"

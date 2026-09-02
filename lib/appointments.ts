@@ -19,6 +19,14 @@ import {
  */
 export const MAX_BOOKING_DAYS = 365;
 
+/**
+ * Өнгөрсөн цаг руу ШИНЭ захиалга бүртгэхийг хэдэн минутаар өршөөх вэ.
+ *
+ * Хуанли 30 минутын нүдтэй тул «яг одоо явж байгаа нүд» рүү бүртгэх нь
+ * хэвийн (10:00–10:30 нүдэнд 10:05-д бүртгэх). Түүнээс хойшхыг хаана.
+ */
+const PAST_GRACE_MIN = 30;
+
 export type SlotInput = {
   branchId: string;
   staffId: string;
@@ -31,6 +39,14 @@ export type SlotInput = {
   excludeAppointmentId?: string;
   /** Бүлгээр засварлах үед — бүлгийн бүх мөрийг давхцалд тооцохгүй */
   excludeAppointmentIds?: string[];
+  /**
+   * Өнөөдрийн ӨНГӨРСӨН цагийг хориглох эсэх.
+   *
+   * ШИНЭ захиалга дээр л `true` — үдээс хойш «өглөөний 10 цагт» захиалга
+   * бүртгэгдэхээс сэргийлнэ. Байгаа захиалгыг засах/зөөхөд хэрэглэхгүй:
+   * өглөө болсон захиалгыг үдээс хойш засах нь хэвийн ажил.
+   */
+  rejectPastTime?: boolean;
 };
 
 export type SlotIssue = { code: string; message: string };
@@ -73,6 +89,15 @@ export async function validateSlot(input: SlotInput): Promise<SlotIssue[]> {
       code: "PAST",
       message: "Өнгөрсөн өдөрт цаг захиалах боломжгүй.",
     });
+  }
+  if (input.rejectPastTime && dateKey === today) {
+    const nowMin = toLocalMinutes(new Date());
+    if (startMin + PAST_GRACE_MIN <= nowMin) {
+      issues.push({
+        code: "PAST_TIME",
+        message: `Өнгөрсөн цагт шинэ захиалга бүртгэх боломжгүй. Одоо ${formatMinutes(nowMin)} болж байна.`,
+      });
+    }
   }
   if (dateKey > addDays(today, MAX_BOOKING_DAYS)) {
     issues.push({

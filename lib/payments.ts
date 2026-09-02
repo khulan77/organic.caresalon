@@ -10,17 +10,27 @@ import type { PaymentMethod } from "@/lib/generated/prisma/enums";
 
 export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   CASH: "Бэлэн",
-  CARD: "Карт",
-  TRANSFER: "Данс / QR",
+  CARD: "POS",
+  TRANSFER: "Данс",
   OTHER: "Бусад",
 };
 
-/** Сонгох цэсэнд гарах дараалал. */
+/** Бүх хэлбэр — тайлан, шүүлтэд. */
 export const PAYMENT_METHODS: PaymentMethod[] = [
   "CASH",
   "CARD",
   "TRANSFER",
   "OTHER",
+];
+
+/**
+ * Ресепшний сонгох гурван хэлбэр.
+ * «Бусад» нь зөвхөн хуучин бичилтэд үлдсэн тул сонголтод гаргахгүй.
+ */
+export const PAYMENT_METHOD_CHOICES: PaymentMethod[] = [
+  "CASH",
+  "CARD",
+  "TRANSFER",
 ];
 
 /** Төлбөрийн явц. */

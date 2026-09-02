@@ -104,6 +104,8 @@ async function validateGroup(input: {
   staffIds: string[];
   /** Засварлаж буй бүлгийн мөрүүд — өөрсдийгөө давхцуулж үзэхгүй */
   excludeAppointmentIds?: string[];
+  /** Зөвхөн ШИНЭ захиалгад — өнгөрсөн цагийг хориглоно */
+  rejectPastTime?: boolean;
 }): Promise<string[]> {
   const results = await Promise.all(
     input.staffIds.map((staffId) =>
@@ -114,6 +116,7 @@ async function validateGroup(input: {
         startMin: input.startMin,
         durationMin: input.durationMin,
         excludeAppointmentIds: input.excludeAppointmentIds,
+        rejectPastTime: input.rejectPastTime,
       }),
     ),
   );
@@ -197,6 +200,8 @@ export async function createAppointment(
     startMin: form.startMin,
     durationMin: resolved.totalDuration,
     staffIds: resolved.groups.map((group) => group.staffId),
+    // Өнгөрсөн цагт ШИНЭ захиалга орохгүй
+    rejectPastTime: true,
   });
   if (issues.length > 0) return { ok: false, issues };
 
