@@ -45,6 +45,12 @@ export function CalendarHeader({
     });
   }
 
+  /**
+   * Утасны дэлгэцэнд салбаруудыг ТЭНЦҮҮ хувааж бүрэн багтаана.
+   * Дөрвөөс олон бол нэр нь танигдахаа болих тул хажуу тийш гүйлгэнэ.
+   */
+  const fitsOnPhone = branches.length <= 4;
+
   const today = todayKey();
   const isToday = optimistic.dateKey === today;
   const { date, weekday } = formatDateNumeric(optimistic.dateKey);
@@ -117,8 +123,16 @@ export function CalendarHeader({
       </div>
 
       {/* ── Мөр 2: салбарууд ── */}
-      <div className="scrollbar-slim flex items-center gap-3 overflow-x-auto px-4 pb-4 md:px-6">
-        <div className="flex shrink-0 items-center gap-1 rounded-full bg-sand-200/70 p-1">
+      <div
+        className={`scrollbar-slim flex items-center gap-2 px-4 pb-4 md:gap-3 md:overflow-x-auto md:px-6 ${
+          fitsOnPhone ? "flex-wrap md:flex-nowrap" : "overflow-x-auto"
+        }`}
+      >
+        <div
+          className={`flex items-center gap-1 rounded-full bg-sand-200/70 p-1 ${
+            fitsOnPhone ? "w-full md:w-auto" : "shrink-0"
+          }`}
+        >
           {branches.map((branch) => {
             const active = branch.id === optimistic.branchId;
             return (
@@ -128,7 +142,9 @@ export function CalendarHeader({
                 onClick={() => navigate({ branchId: branch.id })}
                 aria-current={active ? "true" : undefined}
                 title={branch.address}
-                className={`flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-4 py-1.5 text-sm transition md:gap-2.5 md:px-5 md:py-2 md:text-[15px] ${
+                className={`flex items-center justify-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs transition md:gap-2.5 md:px-5 md:py-2 md:text-[15px] ${
+                  fitsOnPhone ? "min-w-0 flex-1 md:flex-none" : "shrink-0"
+                } ${
                   active
                     ? "bg-white font-medium text-sand-900 shadow-sm"
                     : "text-sand-500 hover:text-sand-800"
@@ -136,11 +152,11 @@ export function CalendarHeader({
               >
                 <span
                   aria-hidden
-                  className={`size-1.5 rounded-full ${
+                  className={`size-1.5 shrink-0 rounded-full ${
                     active ? "bg-brand-500" : "bg-sand-400"
                   }`}
                 />
-                {branch.name}
+                <span className="truncate">{branch.name}</span>
               </button>
             );
           })}

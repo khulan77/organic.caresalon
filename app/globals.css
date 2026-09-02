@@ -4,6 +4,13 @@
    Дулаан цайвар суурь, гүн ногоон брэнд өнгө, намуухан спа өнгөний багц.
    Хуанлийн блокийн өнгө нь ҮЙЛЧИЛГЭЭНИЙ АНГИЛЛААС тодорхойлогдоно. */
 @theme {
+  /*
+    Хажуугийн самбар (rail) хэзээ гарч ирэх вэ.
+    Үүнээс нарийн бол дээд талын хэвтээ цэс — таблет (iPad Pro хүртэл),
+    нарийн цонх бүгд толгой мөртэй, өргөнд нь бүх зай үлдэнэ.
+  */
+  --breakpoint-rail: 1400px;
+
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   --font-serif: var(--font-serif-src), ui-serif, Georgia, serif;
   --font-mono: var(--font-mono-jet), ui-monospace, SFMono-Regular, monospace;

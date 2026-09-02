@@ -62,12 +62,17 @@ export const SLOT_STEP = 30;
 /**
  * Багана ба цагийн баганын өргөн.
  *
- * Гар утсанд баганууд дэлгэцэндээ БАГТАЖ агшина (`min-w-0`) — хөндлөн
- * гүйлгэх шаардлагагүй. Ажилтан олон бол доорх шүүлтүүрээс нэгийг сонгоно.
- * Дэлгэц томрох үед л тогтмол өргөнтэй болж, шаардлагатай бол гүйлгэнэ.
+ * Баганууд дэлгэцэндээ ҮРГЭЛЖ багтана — утас, таблет, компьютер хамаагүй
+ * хуанли хойшоо гүйхгүй. Ажилтан олон бол багана нарийсах тул мастер сонгох
+ * эгнээ өөрөө гарч ирнэ (`MIN_READABLE_COL`).
  */
-const COL = "min-w-0 flex-1 md:min-w-[210px]";
+const COL = "min-w-0 flex-1";
 const GUTTER = "w-9 shrink-0 md:w-[76px]";
+/** `GUTTER`-ийн бодит өргөн — баганын өргөнийг тооцоолоход хэрэгтэй. */
+const GUTTER_PX_PHONE = 36;
+const GUTTER_PX_WIDE = 76;
+/** Багана үүнээс нарийсвал нэр, цаг нь уншигдахаа больдог. */
+const MIN_READABLE_COL = 140;
 
 type Props = {
   branch: BranchSummary;
@@ -166,19 +171,28 @@ export function DayGrid({
     getServerWideSnapshot,
   );
 
-  /** Хуанлийн их биед үлдэх өндөр — ажилтны толгойг хассан цэвэр зай. */
-  const [available, setAvailable] = useState<number | null>(null);
+  /**
+   * Хуанлийн харагдах хэсгийн хэмжээ.
+   * `height` — ажилтны толгойг хассан цэвэр өндөр (масштаб тооцоход),
+   * `width` — багана хэр нарийсахыг мэдэхэд.
+   */
+  const [box, setBox] = useState<{ height: number; width: number } | null>(
+    null,
+  );
 
   useEffect(() => {
-    const box = scrollRef.current;
+    const node = scrollRef.current;
     const head = headRef.current;
-    if (!box || !head) return;
+    if (!node || !head) return;
 
     // Ажиглалт эхлэхэд эхний хэмжилт өөрөө ирнэ — гараар дуудах шаардлагагүй
     const observer = new ResizeObserver(() => {
-      setAvailable(box.clientHeight - head.offsetHeight - GRID_PADDING);
+      setBox({
+        height: node.clientHeight - head.offsetHeight - GRID_PADDING,
+        width: node.clientWidth,
+      });
     });
-    observer.observe(box);
+    observer.observe(node);
     observer.observe(head);
     return () => observer.disconnect();
   }, []);
@@ -262,10 +276,10 @@ export function DayGrid({
    */
   const pxPerMin = useMemo(() => {
     if (!isWide) return PX_PER_MIN_PHONE;
-    if (available === null || rangeEnd <= rangeStart) return PX_PER_MIN_WIDE;
-    const fit = available / (rangeEnd - rangeStart);
+    if (!box || rangeEnd <= rangeStart) return PX_PER_MIN_WIDE;
+    const fit = box.height / (rangeEnd - rangeStart);
     return Math.min(Math.max(fit, PX_PER_MIN_MIN), PX_PER_MIN_MAX);
-  }, [isWide, available, rangeStart, rangeEnd]);
+  }, [isWide, box, rangeStart, rangeEnd]);
 
   const gridHeight = (rangeEnd - rangeStart) * pxPerMin;
 
@@ -299,18 +313,33 @@ export function DayGrid({
   }, [visibleStaff, shownAppointments]);
 
   /**
-   * Гар утсанд НЭГ мастерын багана руу төвлөрөх.
+   * Багана хэр нарийсаж байна вэ — утас, таблет, жижиг цонх бүгдэд адилхан
+   * дүрэм: нэг баганад 140px-ээс бага ногдвол «шахуу» гэж үзнэ.
+   */
+  const columnWidth =
+    box && visibleStaff.length > 0
+      ? (box.width - (isWide ? GUTTER_PX_WIDE : GUTTER_PX_PHONE)) /
+        visibleStaff.length
+      : null;
+  const crowded =
+    visibleStaff.length > 1 &&
+    columnWidth !== null &&
+    columnWidth < MIN_READABLE_COL;
+
+  /**
+   * Шахуу үед НЭГ мастерын багана руу төвлөрөх.
    *
-   * Зөвхөн жижиг дэлгэцэд үйлчилнэ — баганыг CSS-ээр нууна (`hidden md:block`),
-   * тул компьютер дээр эсвэл утсаа хэвтээ болгоход бүх багана эргэж гарна.
+   * Дэлгэц/цонх томрож баганууд тухтай багтмагц сонголт өөрөө хүчингүй болно —
+   * нуугдсан багана «гацаж» үлдэхгүй.
    */
   const [focusStaffId, setFocusStaffId] = useState<string | null>(null);
-  const focus = visibleStaff.some((member) => member.id === focusStaffId)
-    ? focusStaffId
-    : null;
+  const focus =
+    crowded && visibleStaff.some((member) => member.id === focusStaffId)
+      ? focusStaffId
+      : null;
 
-  function hiddenOnPhone(staffId: string): string {
-    return focus && focus !== staffId ? "hidden md:block" : "";
+  function hiddenColumn(staffId: string): string {
+    return focus && focus !== staffId ? "hidden" : "";
   }
 
   // Ажлын цаг руу автоматаар гүйлгэнэ
@@ -622,11 +651,11 @@ export function DayGrid({
       ) : null}
 
       {/*
-        Гар утсанд мастер сонгох. Хоёр багана дэлгэцэнд тухтай багтдаг тул
-        гурав ба түүнээс дээш байхад л гарч ирнэ — босоо зай дэмий эзлэхгүй.
+        Мастер сонгох эгнээ — баганууд шахуу болсон үед Л гарч ирнэ (утас,
+        таблет, нарийн цонх). Тухтай багтаж байвал босоо зай дэмий эзлэхгүй.
       */}
-      {visibleStaff.length > 2 ? (
-        <div className="no-print flex gap-1.5 overflow-x-auto scrollbar-slim border-b border-sand-200 px-3 py-2 md:hidden">
+      {crowded ? (
+        <div className="no-print flex gap-1.5 overflow-x-auto scrollbar-slim border-b border-sand-200 px-3 py-2 md:px-6">
           <button
             type="button"
             onClick={() => setFocusStaffId(null)}
@@ -661,7 +690,7 @@ export function DayGrid({
         }`}
         ref={scrollRef}
       >
-        <div className="relative w-full min-w-full md:w-max">
+        <div className="relative w-full">
           {/* ── Ажилтны толгой ── */}
           <div
             ref={headRef}
@@ -680,7 +709,7 @@ export function DayGrid({
               return (
                 <div
                   key={member.id}
-                  className={`${COL} ${hiddenOnPhone(member.id)} border-l border-sand-200 px-1 py-2 text-center md:px-3 md:py-4`}
+                  className={`${COL} ${hiddenColumn(member.id)} border-l border-sand-200 px-1 py-2 text-center md:px-3 md:py-4`}
                 >
                   <span
                     aria-hidden
@@ -752,7 +781,7 @@ export function DayGrid({
                 onDragOverColumn={hoverColumn}
                 onDropInColumn={dropInColumn}
                 onCancel={cancelAppointment}
-                phoneHidden={hiddenOnPhone(member.id)}
+                hiddenClass={hiddenColumn(member.id)}
                 onCreate={(startMin) => {
                   clearNewParam();
                   setDialog({
@@ -828,7 +857,7 @@ function StaffColumn({
   onDragOverColumn,
   onDropInColumn,
   onCancel,
-  phoneHidden,
+  hiddenClass,
 }: {
   member: DayStaff;
   appointments: DayAppointment[];
@@ -850,8 +879,8 @@ function StaffColumn({
   onDragOverColumn: (staffId: string, pointerMin: number) => void;
   onDropInColumn: (staffId: string, pointerMin: number) => void;
   onCancel: (appointment: DayAppointment) => void;
-  /** Гар утсанд энэ баганыг нуух эсэх — мастер сонголтоос хамаарна */
-  phoneHidden: string;
+  /** Мастер сонгосон үед бусад баганыг нуух ангилал */
+  hiddenClass: string;
 }) {
   const schedule = member.schedules[0];
   const dayOff = !schedule || schedule.isDayOff;
@@ -891,7 +920,7 @@ function StaffColumn({
         event.preventDefault();
         onDropInColumn(member.id, pointerMinutes(event));
       }}
-      className={`relative ${COL} ${phoneHidden} border-l border-sand-200 ${
+      className={`relative ${COL} ${hiddenClass} border-l border-sand-200 ${
         acceptsDrop && dropStartMin !== null ? "bg-brand-500/[0.04]" : ""
       }`}
       style={{ height: gridHeight }}
@@ -1207,7 +1236,7 @@ function AppointmentBlock({
         тэнд захиалгын цонхноос хуулж болно.
       */}
       {!tiny && (!compact || draggable) ? (
-        <span className="absolute bottom-1 right-1 flex gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/appt:opacity-100 max-md:opacity-100">
+        <span className="absolute bottom-1 right-1 flex gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/appt:opacity-100 [@media(hover:none)]:opacity-100">
           {!compact ? (
             <CopyButton
               compact

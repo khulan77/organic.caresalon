@@ -221,11 +221,117 @@ export function AppRail({ user }: { user: CurrentUser }) {
         />
       ) : null}
 
+      {/* ══ Таблет ба нарийн цонх ══ Дээд талын хэвтээ цэс */}
+      <header className="no-print fixed inset-x-0 top-0 z-40 hidden h-14 items-center gap-2 overflow-hidden bg-brand-700 px-3 md:flex rail:hidden">
+        <Link
+          href="/calendar"
+          className="flex shrink-0 items-center gap-2.5 rounded-xl pr-1 transition hover:opacity-90"
+        >
+          <Image
+            src="/logo.png"
+            alt="Organic Care"
+            width={80}
+            height={80}
+            priority
+            className="size-9 shrink-0 rounded-full bg-white object-cover"
+          />
+          {/* Нэр нь зөвхөн зай хүрэлцэхэд — нарийн таблетад цэс нь чухал */}
+          <span className="hidden whitespace-nowrap font-serif text-lg text-brand-50 xl:inline">
+            Organic Care
+          </span>
+        </Link>
+
+        <nav
+          aria-label="Үндсэн цэс"
+          className="flex min-w-0 flex-1 items-center justify-center gap-0.5"
+        >
+          {items.map((item) => {
+            const active =
+              pathname === item.href || pathname.startsWith(`${item.href}/`);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                title={item.label}
+                aria-label={item.label}
+                aria-current={active ? "page" : undefined}
+                className={`flex h-10 shrink-0 items-center gap-2 rounded-xl px-2.5 text-sm transition-colors ${
+                  active
+                    ? "bg-white/12 text-white"
+                    : "text-white/60 hover:bg-white/8 hover:text-white/90"
+                }`}
+              >
+                {item.icon}
+                {/*
+                  Нарийн дэлгэцэд зөвхөн ИДЭВХТЭЙ хуудсын нэр гарна — хаана
+                  байгаа нь тодорхой, гэхдээ бүх цэс нэг мөрөнд тухтай багтана.
+                */}
+                <span
+                  className={`whitespace-nowrap ${active ? "" : "hidden xl:inline"}`}
+                >
+                  {item.label}
+                </span>
+              </Link>
+            );
+          })}
+        </nav>
+
+        <button
+          type="button"
+          onClick={() => setMenuOpen((current) => !current)}
+          aria-label={`${user.name} — хэрэглэгчийн цэс`}
+          aria-expanded={menuOpen}
+          className="flex shrink-0 items-center gap-2 rounded-xl p-1 transition-colors hover:bg-white/8"
+        >
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-sand-300 text-sm font-medium text-sand-800">
+            {initial}
+          </span>
+          <span className="hidden min-w-0 pr-1 text-left xl:block">
+            <span className="block truncate whitespace-nowrap text-sm text-white">
+              {user.name}
+            </span>
+            <span className="block whitespace-nowrap text-xs text-white/50">
+              {ROLE_LABELS[user.role]}
+            </span>
+          </span>
+        </button>
+      </header>
+
+      {/* Толгой мөрний хэрэглэгчийн цэс */}
+      {menuOpen ? (
+        <>
+          <button
+            type="button"
+            aria-label="Цэс хаах"
+            onClick={() => setMenuOpen(false)}
+            className="no-print fixed inset-0 z-40 hidden cursor-default md:block rail:hidden"
+          />
+          <div className="no-print fixed right-3 top-[52px] z-50 hidden w-56 rounded-xl border border-sand-200 bg-white p-1.5 shadow-xl md:block rail:hidden">
+            <div className="border-b border-sand-100 px-2.5 py-2">
+              <p className="truncate text-sm font-medium text-sand-900">
+                {user.name}
+              </p>
+              <p className="text-xs text-sand-500">
+                {ROLE_LABELS[user.role]} · {user.phone}
+              </p>
+            </div>
+            <form action={logout}>
+              <button
+                type="submit"
+                className="mt-1 w-full rounded-lg px-2.5 py-2 text-left text-sm text-sand-700 transition hover:bg-sand-100"
+              >
+                Гарах
+              </button>
+            </form>
+          </div>
+        </>
+      ) : null}
+
       {/* ══ Компьютер ══ Зүүн талын нарийн rail */}
       <nav
         aria-label="Үндсэн цэс"
         data-expanded={expanded ? "" : undefined}
-        className={`no-print group relative z-30 hidden shrink-0 flex-col overflow-hidden bg-brand-700 py-4 transition-[width] duration-200 ease-out md:flex ${
+        className={`no-print group relative z-30 hidden shrink-0 flex-col overflow-hidden bg-brand-700 py-4 transition-[width] duration-200 ease-out rail:flex ${
           expanded ? "w-[228px]" : "w-[68px]"
         }`}
       >
@@ -305,9 +411,9 @@ export function AppRail({ user }: { user: CurrentUser }) {
             type="button"
             aria-label="Цэс хаах"
             onClick={() => setMenuOpen(false)}
-            className="no-print fixed inset-0 z-40 hidden cursor-default md:block"
+            className="no-print fixed inset-0 z-40 hidden cursor-default rail:block"
           />
-          <div className="no-print fixed bottom-4 left-[236px] z-50 hidden w-56 rounded-xl border border-sand-200 bg-white p-1.5 shadow-xl md:block">
+          <div className="no-print fixed bottom-4 left-[236px] z-50 hidden w-56 rounded-xl border border-sand-200 bg-white p-1.5 shadow-xl rail:block">
             <div className="border-b border-sand-100 px-2.5 py-2">
               <p className="truncate text-sm font-medium text-sand-900">
                 {user.name}

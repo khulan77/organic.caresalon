@@ -19,7 +19,6 @@ export default async function SettingsPage() {
         phone: true,
         openMin: true,
         closeMin: true,
-        slotMin: true,
         isActive: true,
         _count: { select: { staff: true } },
       },
@@ -46,13 +45,12 @@ export default async function SettingsPage() {
         <section>
           <h2 className="mb-2 text-sm font-semibold text-sand-800">Салбар</h2>
           <div className="scrollbar-slim overflow-x-auto rounded-xl border border-sand-200 bg-white">
-            <table className="w-full min-w-[560px] text-sm">
+            <table className="w-full min-w-[480px] text-sm">
               <thead className="border-b border-sand-200 bg-sand-50 text-left text-xs text-sand-600">
                 <tr>
                   <th className="px-4 py-2 font-medium">Нэр</th>
                   <th className="px-4 py-2 font-medium">Хаяг</th>
                   <th className="w-32 px-4 py-2 font-medium">Ажлын цаг</th>
-                  <th className="w-20 px-4 py-2 text-right font-medium">Нүд</th>
                   <th className="w-24 px-4 py-2 text-right font-medium">Ажилтан</th>
                 </tr>
               </thead>
@@ -70,9 +68,6 @@ export default async function SettingsPage() {
                     <td className="px-4 py-2.5 text-sand-600">{branch.address}</td>
                     <td className="px-4 py-2.5 tabular-nums text-sand-700">
                       {formatMinutes(branch.openMin)}–{formatMinutes(branch.closeMin)}
-                    </td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-sand-600">
-                      {branch.slotMin} мин
                     </td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-sand-700">
                       {branch._count.staff}

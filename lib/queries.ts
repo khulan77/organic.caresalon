@@ -22,7 +22,6 @@ export async function getBranches() {
       phone: true,
       openMin: true,
       closeMin: true,
-      slotMin: true,
     },
   });
 }
