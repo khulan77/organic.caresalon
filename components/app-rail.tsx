@@ -91,15 +91,23 @@ export function AppRail({ user }: { user: CurrentUser }) {
   // Задарсан эсэх — дарж нээсэн, эсвэл хэрэглэгчийн цэс нээлттэй
   const expanded = open || menuOpen;
 
+  // Цагийн бүртгэлийг ресепшн ч харна — гэхдээ зөвхөн харьяа салбарынхаа
+  // ажилчдыг (хязгаарлалт нь /timesheet хуудсан дотор).
+  const timesheet = {
+    href: "/timesheet",
+    label: "Цагийн бүртгэл",
+    icon: ClockIcon,
+  };
+
   const items =
     user.role === "ADMIN"
       ? [
           ...NAV,
-          { href: "/timesheet", label: "Цагийн бүртгэл", icon: ClockIcon },
+          timesheet,
           { href: "/reports", label: "Тайлан", icon: ChartIcon },
           { href: "/settings", label: "Тохиргоо", icon: GearIcon },
         ]
-      : NAV;
+      : [...NAV, timesheet];
 
   const initial = user.name.trim().charAt(0).toUpperCase();
 

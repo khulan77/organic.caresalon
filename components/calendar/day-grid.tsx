@@ -236,6 +236,33 @@ export function DayGrid({
   const openMin = closure?.openMin ?? branch.openMin;
   const closeMin = closure?.closeMin ?? branch.closeMin;
 
+  /**
+   * Ажилтан тус бүрийн ӨДРИЙН ОРЛОГО ба өдрийн нийт дүн.
+   *
+   * Цуцлагдсан ба ирээгүй захиалга ОРОХГҮЙ — бодитоор үйлчилсэн дүн л тоологдоно.
+   * Хамтарсан захиалгын мөр бүр өөрийн ажилтанд ногдсон дүнтэй тул нийлбэр нь
+   * ажилтны орлогыг зөв харуулна. Төлбөр нь үндсэн мөрөнд наалддаг тул
+   * давхардаж тоологдохгүй.
+   */
+  const money = useMemo(() => {
+    const perStaff = new Map<string, { count: number; amount: number }>();
+    let total = 0;
+    let paid = 0;
+    for (const appt of appointments) {
+      if (appt.status === "CANCELLED" || appt.status === "NO_SHOW") continue;
+      const row = perStaff.get(appt.staffId) ?? { count: 0, amount: 0 };
+      row.count += 1;
+      row.amount += appt.totalPrice;
+      perStaff.set(appt.staffId, row);
+      total += appt.totalPrice;
+      for (const payment of appt.payments) paid += payment.amount;
+    }
+    return { perStaff, total, paid };
+  }, [appointments]);
+
+  /** Доод мөрний ажилтан тус бүрийн задаргаа нээлттэй эсэх. */
+  const [breakdown, setBreakdown] = useState(false);
+
   const cancelledCount = useMemo(
     () => appointments.filter((a) => a.status === "CANCELLED").length,
     [appointments],
@@ -700,12 +727,9 @@ export function DayGrid({
             {visibleStaff.map((member) => {
               const schedule = member.schedules[0];
               const dayOff = !schedule || schedule.isDayOff;
-              const count =
-                byStaff
-                  .get(member.id)
-                  ?.filter(
-                    (a) => a.status !== "CANCELLED" && a.status !== "NO_SHOW",
-                  ).length ?? 0;
+              const day = money.perStaff.get(member.id);
+              const count = day?.count ?? 0;
+              const earned = day?.amount ?? 0;
               return (
                 <div
                   key={member.id}
@@ -728,6 +752,12 @@ export function DayGrid({
                   >
                     {dayOff ? "Амралттай" : `${count} захиалга`}
                   </p>
+                  {/* Тухайн өдөр энэ мастер хэдэн төгрөгийн үйлчилгээ хийсэн */}
+                  {earned > 0 ? (
+                    <p className="truncate text-[11px] font-semibold text-sand-800 md:text-sm">
+                      {formatPrice(earned)}
+                    </p>
+                  ) : null}
                 </div>
               );
             })}
@@ -815,6 +845,83 @@ export function DayGrid({
             rangeEnd={rangeEnd}
             pxPerMin={pxPerMin}
           />
+        </div>
+      </div>
+
+      {/*
+        Өдрийн нийт дүн — хуанлийн ЯГ доод талд, гүйлгэхгүйгээр үргэлж харагдана.
+        «Нийт» нь захиалгын дүн, «Төлөгдсөн» нь бодитоор гарт орсон мөнгө.
+      */}
+      <div className="flex shrink-0 flex-col border-t border-sand-200 bg-sand-50">
+        {/* Ажилтан тус бүрийн задаргаа — дарж нээж хаана */}
+        {breakdown ? (
+          <ul className="scrollbar-slim max-h-44 overflow-y-auto border-b border-sand-200 px-4 py-1.5 md:px-6">
+            {visibleStaff.map((member) => {
+              const day = money.perStaff.get(member.id);
+              return (
+                <li
+                  key={member.id}
+                  className="flex items-baseline justify-between gap-3 py-1"
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span
+                      aria-hidden
+                      className="size-2 shrink-0 rounded-full"
+                      style={{ backgroundColor: member.color }}
+                    />
+                    <span className="truncate text-sm text-sand-700">
+                      {member.name}
+                    </span>
+                  </span>
+                  <span className="flex shrink-0 items-baseline gap-3">
+                    <span className="text-xs text-sand-400">
+                      {day?.count ?? 0} захиалга
+                    </span>
+                    <span className="min-w-[86px] text-right text-sm font-semibold tabular-nums text-sand-900">
+                      {day ? formatPrice(day.amount) : "—"}
+                    </span>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
+
+        <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 px-4 py-2 md:px-6">
+          <button
+            type="button"
+            onClick={() => setBreakdown((value) => !value)}
+            aria-expanded={breakdown}
+            className="flex items-baseline gap-2 rounded-lg text-left transition hover:opacity-80"
+          >
+            <span aria-hidden className="text-xs text-sand-400">
+              {breakdown ? "▾" : "▸"}
+            </span>
+            <span className="text-sm text-sand-500">Өдрийн нийт</span>
+            <span className="text-base font-semibold text-sand-900 md:text-lg">
+              {formatPrice(money.total)}
+            </span>
+            <span className="text-xs text-sand-400 underline underline-offset-2">
+              {breakdown ? "хураах" : "ажилтнаар"}
+            </span>
+          </button>
+
+          <p className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs text-sand-500">
+            <span>
+              Төлөгдсөн{" "}
+              <b className="font-semibold text-sand-800">
+                {formatPrice(money.paid)}
+              </b>
+            </span>
+            {money.total - money.paid > 0 ? (
+              <span>
+                Үлдэгдэл{" "}
+                <b className="font-semibold text-danger-600">
+                  {formatPrice(money.total - money.paid)}
+                </b>
+              </span>
+            ) : null}
+          </p>
         </div>
       </div>
 
