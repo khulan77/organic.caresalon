@@ -61,3 +61,30 @@ if (!/^postgres(ql)?:\/\//.test(trimmed)) {
 }
 
 console.log("✓ DATABASE_URL хэвийн байна.");
+
+/*
+  Migration нь pooler-ээр явж БОЛОХГҮЙ.
+
+  `prisma migrate deploy` сессийн түгжээ (pg_advisory_lock) тавьдаг ч Neon-ы
+  pooler гүйлгээ бүрд өөр холболт өгдөг тул түгжээ алдагдаж, deploy нь
+  «P1002 — Timed out trying to acquire a postgres advisory lock» гэж унадаг.
+  `prisma.config.ts` доторх `directUrl()` үүнийг өөрөө засдаг ч тохиргоо нь
+  анхнаасаа зөв байвал дээр — тиймээс энд сануулна.
+*/
+const direct = process.env.DIRECT_URL?.trim();
+
+if (!direct) {
+  console.warn(
+    "⚠ DIRECT_URL тохируулаагүй байна. Migration-ыг DATABASE_URL-аас pooler-гүй\n" +
+      "  хаяг гаргаж ажиллуулна. Vercel → Environment Variables дээр Neon-ы\n" +
+      "  «Direct connection» мөрийг DIRECT_URL нэрээр нэмэхийг зөвлөе.",
+  );
+} else if (direct.includes("-pooler")) {
+  console.warn(
+    "⚠ DIRECT_URL нь pooled (`-pooler`) хаяг байна. Migration-д тохирохгүй тул\n" +
+      "  `-pooler`-гүй болгож ажиллуулна. Neon-ы «Direct connection» мөрийг\n" +
+      "  хуулж тавина уу.",
+  );
+} else {
+  console.log("✓ DIRECT_URL хэвийн байна (pooler-гүй).");
+}
