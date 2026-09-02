@@ -222,7 +222,7 @@ export function AppRail({ user }: { user: CurrentUser }) {
       ) : null}
 
       {/* ══ Таблет ба нарийн цонх ══ Дээд талын хэвтээ цэс */}
-      <header className="no-print fixed inset-x-0 top-0 z-40 hidden h-14 items-center gap-2 overflow-hidden bg-brand-700 px-3 md:flex rail:hidden">
+      <header className="no-print fixed inset-x-0 top-0 z-40 hidden h-14 items-center gap-2 overflow-hidden bg-brand-700 px-3 md:max-rail:flex">
         <Link
           href="/calendar"
           className="flex shrink-0 items-center gap-2.5 rounded-xl pr-1 transition hover:opacity-90"
@@ -304,9 +304,9 @@ export function AppRail({ user }: { user: CurrentUser }) {
             type="button"
             aria-label="Цэс хаах"
             onClick={() => setMenuOpen(false)}
-            className="no-print fixed inset-0 z-40 hidden cursor-default md:block rail:hidden"
+            className="no-print fixed inset-0 z-40 hidden cursor-default md:max-rail:block"
           />
-          <div className="no-print fixed right-3 top-[52px] z-50 hidden w-56 rounded-xl border border-sand-200 bg-white p-1.5 shadow-xl md:block rail:hidden">
+          <div className="no-print fixed right-3 top-[52px] z-50 hidden w-56 rounded-xl border border-sand-200 bg-white p-1.5 shadow-xl md:max-rail:block">
             <div className="border-b border-sand-100 px-2.5 py-2">
               <p className="truncate text-sm font-medium text-sand-900">
                 {user.name}
