@@ -28,6 +28,7 @@ import {
   deleteAppointment,
   deletePayment,
   findClients,
+  freeStartTimes,
   setAppointmentStatus,
   settleAppointment,
   updateAppointment,
@@ -316,6 +317,112 @@ export function AppointmentDialog({
     state.mode === "edit"
       ? toLocalMinutes(state.appointment.startAt)
       : state.startMin;
+
+  // ── Эхлэх цаг: тухайн ажилтны СУЛ ЦАГУУДЫГ л санал болгоно
+  /** Огноо цонхонд солигдож болно — сул цаг шинэ өдрөөрөө татагдана. */
+  const [dateKey, setDateKey] = useState(state.dateKey);
+  /** Байгаа захиалгын цагийг ЯГ хэвээр нь барина — засахад цаг өөрөө шилжихгүй. */
+  const [startTime, setStartTime] = useState(() =>
+    state.mode === "edit"
+      ? formatMinutes(defaultStartMin)
+      : nearestSlot(defaultStartMin),
+  );
+  const startMin = parseMinutes(startTime);
+
+  /** Зэрэг ажиллах бүх ажилтан сул байх ёстой — хуваарилалт хийгээгүй бол үндсэн нь. */
+  const slotStaffIds =
+    involvedStaffIds.length > 0 ? involvedStaffIds : [primaryStaffId];
+  /** Үйлчилгээ сонгоогүй байхад ч сул цаг харагдана — нэг нүдээр хэмжинэ. */
+  const slotDuration = totalDuration > 0 ? totalDuration : SLOT_STEP;
+  const slotStaffNames = slotStaffIds
+    .map((id) => staff.find((member) => member.id === id)?.name ?? "—")
+    .join(", ");
+
+  /**
+   * Сул цагуудын хоорондын зай.
+   *
+   * Анхдагчаар үйлчилгээний уртаар (доод тал нь 1 цаг) — 30 минут тутам
+   * санал болговол ар араасаа таарахгүй хагас цагууд хуримтлагдана.
+   * Үйлчлүүлэгч тодорхой цаг нэрлэвэл 30 минутын алхам руу шилжиж болно.
+   */
+  const [fineSteps, setFineSteps] = useState(false);
+  const slotStep = fineSteps
+    ? SLOT_STEP
+    : Math.max(2 * SLOT_STEP, Math.ceil(slotDuration / SLOT_STEP) * SLOT_STEP);
+
+  /**
+   * Сүүлд ирсэн хариу — ямар хүсэлтийнх болохыг нь `key`-ээр нь хамт барина.
+   * Түлхүүр зөрж байвал л «ачаалж байна» гэсэн үг: эффект дотор төлөв
+   * цэвэрлэх шаардлагагүй болно.
+   */
+  const [slotData, setSlotData] = useState<{
+    key: string;
+    slots: number[];
+    reason: string | null;
+  } | null>(null);
+
+  /**
+   * Дахин татах шалтгааныг НЭГ МӨРӨӨР илэрхийлнэ — массив нь дүрслэл бүрд
+   * шинээр үүсдэг тул `useEffect`-ийн хамаарал болгож болохгүй.
+   */
+  const slotKey = [
+    state.branchId,
+    dateKey,
+    [...slotStaffIds].sort().join(","),
+    slotDuration,
+    slotStep,
+    siblings.map((sibling) => sibling.id).join(","),
+  ].join("|");
+
+  const mode = state.mode;
+  /** Хариу нь одоогийн түлхүүрийнх биш бол ачаалж байна. */
+  const slots = slotData?.key === slotKey ? slotData.slots : null;
+  const slotReason = slotData?.key === slotKey ? slotData.reason : null;
+
+  useEffect(() => {
+    if (!canWrite) return;
+    const [branchId, day, staffIds, duration, step, exclude] =
+      slotKey.split("|");
+
+    let active = true;
+
+    // Үйлчилгээ дараалан дарахад сүлжээ дүүргэхгүй
+    const timer = setTimeout(() => {
+      freeStartTimes({
+        branchId,
+        dateKey: day,
+        staffIds: staffIds.split(","),
+        durationMin: Number(duration),
+        stepMin: Number(step),
+        excludeAppointmentIds: exclude ? exclude.split(",") : [],
+        rejectPastTime: mode === "create",
+      })
+        .then((outcome) => {
+          if (!active) return;
+          setSlotData({
+            key: slotKey,
+            slots: outcome.slots,
+            reason: outcome.reason,
+          });
+        })
+        .catch(() => {
+          if (!active) return;
+          setSlotData({
+            key: slotKey,
+            slots: [],
+            reason: "Сул цагийг ачаалж чадсангүй. Дахин оролдоно уу.",
+          });
+        });
+    }, 120);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [canWrite, slotKey, mode]);
+
+  /** Сонгосон цаг саналаас гарсан эсэх — жишээ нь үйлчилгээ нэмээд урт болсон. */
+  const startTaken = slots !== null && !slots.includes(startMin);
 
   function toggleService(id: string) {
     setServiceIds((current) =>
@@ -633,8 +740,8 @@ export function AppointmentDialog({
               </div>
             </section>
 
-            {/* Ажилтан, огноо, цаг */}
-            <section className="grid gap-3 sm:grid-cols-3">
+            {/* Ажилтан, огноо */}
+            <section className="grid gap-3 sm:grid-cols-2">
               <Field
                 label="Үндсэн ажилтан"
                 hint={
@@ -661,24 +768,96 @@ export function AppointmentDialog({
                 <input
                   type="date"
                   name="dateKey"
-                  defaultValue={state.dateKey}
+                  value={dateKey}
+                  onChange={(event) => setDateKey(event.target.value)}
                   className={inputClass}
                 />
               </Field>
+            </section>
 
-              <Field label="Эхлэх цаг" hint="30 минутын алхамтай">
-                <select
-                  name="startTime"
-                  defaultValue={nearestSlot(defaultStartMin)}
-                  className={inputClass}
-                >
-                  {START_TIMES.map((minute) => (
-                    <option key={minute} value={formatMinutes(minute)}>
-                      {formatMinutes(minute)}
-                    </option>
+            {/*
+              Эхлэх цаг — задгай жагсаалт биш, ТУХАЙН АЖИЛТНЫ СУЛ ЦАГУУД.
+              Ээлж, чөлөө, бусад захиалгыг хассан цагууд л энд гарна: ресепшн
+              завгүй цаг сонгоод алдаа идэх шаардлагагүй болно.
+            */}
+            <section>
+              <input type="hidden" name="startTime" value={startTime} />
+
+              <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3">
+                <SectionTitle>Эхлэх цаг</SectionTitle>
+                <span className="mb-2 min-w-0 truncate text-xs text-sand-500">
+                  {slotStaffNames} · {formatDuration(slotDuration)}
+                </span>
+              </div>
+
+              {!canWrite ? (
+                <p className="text-sm tabular-nums text-sand-800">{startTime}</p>
+              ) : slots === null ? (
+                <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-6">
+                  {Array.from({ length: 12 }).map((_, index) => (
+                    <div
+                      key={index}
+                      className="h-9 animate-pulse rounded-xl bg-sand-100"
+                    />
                   ))}
-                </select>
-              </Field>
+                </div>
+              ) : slots.length === 0 ? (
+                <p className="rounded-lg bg-warn-50 px-3 py-2.5 text-sm text-warn-700 ring-1 ring-warn-200">
+                  {slotReason ?? "Сул цаг үлдээгүй байна."}
+                </p>
+              ) : (
+                <>
+                  <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-6">
+                    {/* Сонгосон цаг завгүй болсон бол нуухгүй — анхааруулж харуулна */}
+                    {startTaken ? (
+                      <button
+                        type="button"
+                        aria-pressed="true"
+                        className="rounded-xl border border-warn-400 bg-warn-50 py-2 text-sm font-medium tabular-nums text-warn-700"
+                      >
+                        {startTime}
+                      </button>
+                    ) : null}
+
+                    {slots.map((minute) => {
+                      const value = formatMinutes(minute);
+                      const active = minute === startMin;
+                      return (
+                        <button
+                          key={minute}
+                          type="button"
+                          onClick={() => setStartTime(value)}
+                          aria-pressed={active}
+                          className={`rounded-xl border py-2 text-sm tabular-nums transition active:scale-[0.98] ${
+                            active
+                              ? "border-brand-600 bg-brand-50 font-medium text-brand-700"
+                              : "border-sand-300 text-sand-700 hover:bg-sand-50"
+                          }`}
+                        >
+                          {value}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-sand-500">
+                    <span>
+                      {startTaken
+                        ? "Сонгосон цаг багтахаа больжээ — сул цагаас сонгоно уу."
+                        : `${slots.length} сул цаг · ${formatDuration(slotStep)} зайтай`}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setFineSteps((current) => !current)}
+                      className="text-brand-700 underline-offset-2 hover:underline"
+                    >
+                      {fineSteps
+                        ? "Үйлчилгээний зайгаар"
+                        : "30 минутын алхмаар"}
+                    </button>
+                  </p>
+                </>
+              )}
             </section>
 
             {/* Ажилтны хуваарилалт — 2+ ажилтантай салбарт л утга учиртай */}
@@ -747,7 +926,7 @@ export function AppointmentDialog({
               <p className="rounded-lg bg-sand-100/70 px-3 py-2 text-sm text-sand-600">
                 Дуусах цаг:{" "}
                 <strong className="tabular-nums text-sand-900">
-                  {formatMinutes(defaultStartMin + totalDuration)}
+                  {formatMinutes(startMin + totalDuration)}
                 </strong>{" "}
                 (нийт {formatDuration(totalDuration)}
                 {involvedStaffIds.length > 1

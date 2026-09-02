@@ -6,18 +6,15 @@ import type { BranchSummary } from "@/lib/queries";
 import { addDays, todayKey } from "@/lib/time";
 import { inputClass } from "@/components/ui/form";
 
-/** Түргэн сонголтууд — ресепшн/админ хамгийн олон хардаг мужууд. */
 type Preset = { key: string; label: string; range: () => [string, string] };
 
-/** Сарын эхний өдөр. */
 function monthStart(dateKey: string): string {
   return `${dateKey.slice(0, 7)}-01`;
 }
 
-/** Сарын сүүлийн өдөр. */
 function monthEnd(dateKey: string): string {
   const [year, month] = dateKey.split("-").map(Number);
-  // Дараагийн сарын 0 дахь өдөр = энэ сарын сүүлийн өдөр
+
   const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
   return `${dateKey.slice(0, 7)}-${String(last).padStart(2, "0")}`;
 }
@@ -84,13 +81,7 @@ export function ReportFilters({
   }
 
   return (
-    /*
-      Гар утсанд: түргэн сонголтууд хажуу тийш гүйнэ, огноо хоёулаа нэг мөрөнд
-      хагас хагасаараа, салбар нь доор бүтэн өргөнөөр.
-      md-ээс дээш: бүгд нэг мөрөнд эгнэнэ — `md:contents` нь боодлыг арилгана.
-    */
     <div className="no-print flex flex-col gap-3 border-b border-sand-200 bg-sand-50 px-4 py-3 md:flex-row md:flex-wrap md:items-end md:gap-x-3 md:px-6">
-      {/* Түргэн сонголтууд — нарийхан дэлгэцэд хажуу тийш гүйнэ */}
       <div className="scrollbar-slim -mx-4 overflow-x-auto px-4 md:mx-0 md:overflow-visible md:px-0">
         <div className="flex w-max items-center gap-1 rounded-full bg-sand-200/70 p-1">
           {PRESETS.map((preset) => {

@@ -25,10 +25,7 @@ import {
   PAYMENT_STATE_LABELS,
   summarize,
 } from "@/lib/payments";
-import {
-  moveAppointment,
-  setAppointmentStatus,
-} from "@/app/(app)/calendar/actions";
+import { moveAppointment } from "@/app/(app)/calendar/actions";
 import { AppointmentDialog, type DialogState } from "./appointment-dialog";
 
 /**
@@ -118,40 +115,33 @@ type DragState = {
  * дэвсгэр дээр текст нь уншигдах гүнтэй.
  */
 const BLOCK_COLORS = [
-  "#c0798c", // ягаан
-  "#4a7fa8", // цэнхэр
-  "#5c8a6b", // ногоон
-  "#b5813f", // шаргал
-  "#8f6bab", // ягаан ягаан (нил)
-  "#3f8a86", // номин
-  "#c07d5c", // шавранцар
-  "#7d8b4a", // хайлаас
-  "#6a74b0", // индиго
-  "#a2618c", // чавга
-  "#4f8fa0", // тэнгис
-  "#9a6b52", // хүрэн
+  "#a35b43", // тоосгон
+  "#a38643", // шаргал
+  "#96a343", // хайлаас
+  "#6ba343", // ногоон
+  "#43a353", // навч
+  "#43a383", // номин
+  "#439ba3", // тэнгис
+  "#4378a3", // цэнхэр
+  "#4356a3", // индиго
+  "#5f43a3", // нил
+  "#9043a3", // ягаан нил
+  "#a34383", // чавга
 ];
 
-/** Тэмдэгт мөрөөс тогтвортой индекс — дахин ачаалахад өнгө өөрчлөгдөхгүй. */
-function paletteIndex(key: string): number {
-  let hash = 0;
-  for (let index = 0; index < key.length; index += 1) {
-    hash = (hash * 31 + key.charCodeAt(index)) | 0;
-  }
-  return Math.abs(hash) % BLOCK_COLORS.length;
-}
+/**
+ * Дараалсан захиалгууд ХАМГИЙН ХОЛ өнгө авахын тулд палитрыг алгасаж түүнэ.
+ * 5 ба 12 харилцан анхны тоо тул 12 өнгө бүгд эргэлтэнд орно, гэхдээ хөрш
+ * захиалгууд өнгөний хүрээний эсрэг талаас өнгө авна.
+ */
+const COLOR_STRIDE = 5;
 
 /**
- * Захиалгын өнгө.
+ * Өнгийг цайруулж дэвсгэр болгоно.
  *
- * ХАМТАРСАН захиалгын бүх мөр ЯГ ИЖИЛ өнгөтэй (нэг үйлчлүүлэгчийн нэг ирэлт
- * гэдэг нь нүдэнд шууд харагдана), бусад захиалга бүр өөр өөр өнгөтэй.
+ * Хэт цайруулбал бүх захиалга нэг цагаан блок болж, аль нь аль болох нь
+ * ялгарахаа больдог — өнгө нь ХАРАГДАХ хэмжээнд үлдэнэ.
  */
-function colorOf(appointment: DayAppointment): string {
-  return BLOCK_COLORS[paletteIndex(appointment.groupId ?? appointment.id)];
-}
-
-/** Өнгийг цайруулж дэвсгэр болгоно. */
 function tint(color: string, percent: number): string {
   return `color-mix(in srgb, ${color} ${percent}%, white)`;
 }
@@ -318,10 +308,47 @@ export function DayGrid({
   /** Доод мөрний ажилтан тус бүрийн задаргаа нээлттэй эсэх. */
   const [breakdown, setBreakdown] = useState(false);
 
-  const cancelledCount = useMemo(
-    () => appointments.filter((a) => a.status === "CANCELLED").length,
-    [appointments],
-  );
+  /**
+   * Цуцлагдсан захиалгын ТҮҮХ — цагийн дарааллаар, бүлгийг нэг мөрөнд.
+   *
+   * Хуанлинаас нуусан ч мөр нь эндээс олдоно: хэн, хэдэн цагт захиалсан,
+   * хэн цуцалсан, ямар шалтгаантай. Дарвал захиалга нь нээгдэж «Сэргээх»
+   * боломжтой.
+   */
+  const cancelledHistory = useMemo(() => {
+    const seen = new Set<string>();
+    const rows: DayAppointment[] = [];
+
+    for (const appointment of [...appointments].sort(
+      (a, b) => a.startAt.getTime() - b.startAt.getTime(),
+    )) {
+      if (appointment.status !== "CANCELLED") continue;
+      const key = appointment.groupId ?? appointment.id;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      // Хамтарсан захиалгыг үндсэн мөрөөр нь төлөөлүүлнэ
+      const primary = appointment.groupId
+        ? (appointments.find(
+            (a) => a.groupId === appointment.groupId && a.isPrimary,
+          ) ?? appointment)
+        : appointment;
+      rows.push(primary);
+    }
+
+    return rows;
+  }, [appointments]);
+
+  /** Бүлгийн бүх ажилтны нэр — «Ankhmaa, Selenge». */
+  function staffNamesOf(appointment: DayAppointment): string {
+    const group = appointment.groupId
+      ? appointments.filter((a) => a.groupId === appointment.groupId)
+      : [appointment];
+    return group
+      .map((row) => staff.find((m) => m.id === row.staffId)?.name)
+      .filter(Boolean)
+      .join(", ");
+  }
 
   /**
    * Хуанли дээр ЗУРАГДАХ захиалгууд.
@@ -593,20 +620,33 @@ export function DayGrid({
     });
   }
 
-  // ───────────────────── Нэг товчоор цуцлах ─────────────────────
-
   /**
-   * Хуанлинаас шууд цуцална — шалтгаан асуухгүй, мэдэгдэл ч гаргахгүй.
-   * Блок нь тэр дороо алга болж цаг нь сул болно.
+   * Захиалга бүрийн өнгө.
    *
-   * Андуурсан бол «Түүх»-ээс тухайн захиалгыг нээгээд «Сэргээх» дарна.
+   * ӨДРИЙН ДАРААЛЛААР палитраас ээлжлэн оноодог тул хоёр захиалга санамсаргүй
+   * ижил өнгө болох боломжгүй — өмнө нь хэшээр сонгодог байсан тул ойролцоо
+   * өнгөнүүд давхцаж, бүх блок нэг өнгө мэт харагддаг байв.
+   *
+   * ХАМТАРСАН захиалгын бүх мөр нэг түлхүүртэй тул ЯГ ИЖИЛ өнгөтэй үлдэнэ.
    */
-  function cancelAppointment(appointment: DayAppointment) {
-    setNotice(null);
-    startAction(async () => {
-      const result = await setAppointmentStatus(appointment.id, "CANCELLED");
-      if (!result.ok) showIssues("Цуцлаж чадсангүй.", result.issues);
-    });
+  const colorByKey = useMemo(() => {
+    const map = new Map<string, string>();
+    const ordered = [...appointments].sort(
+      (a, b) =>
+        a.startAt.getTime() - b.startAt.getTime() ||
+        a.staffId.localeCompare(b.staffId),
+    );
+    for (const appointment of ordered) {
+      const key = appointment.groupId ?? appointment.id;
+      if (map.has(key)) continue;
+      const index = (map.size * COLOR_STRIDE) % BLOCK_COLORS.length;
+      map.set(key, BLOCK_COLORS[index]);
+    }
+    return map;
+  }, [appointments]);
+
+  function colorOf(appointment: DayAppointment): string {
+    return colorByKey.get(appointment.groupId ?? appointment.id) ?? BLOCK_COLORS[0];
   }
 
   /**
@@ -682,22 +722,84 @@ export function DayGrid({
         </div>
       ) : null}
 
-      {/* Цуцлагдсан захиалгыг харах — нэг товч, өөр тайлбаргүй */}
-      {cancelledCount > 0 ? (
-        <div className="no-print flex items-center border-b border-sand-200 px-4 py-1 md:px-6">
+      {/*
+        Цуцлагдсан захиалгын түүх.
+
+        Хаалттай үедээ зөвхөн нэг тоо — хуанли цэвэр хэвээр. Нээвэл цуцлагдсан
+        захиалгууд хуанли дээр саарлаар эргэн гарч ирж, доор нь хэн цуцалсан,
+        ямар шалтгаантай нь жагсаана.
+      */}
+      {cancelledHistory.length > 0 ? (
+        <div className="no-print border-b border-sand-200 px-4 py-1.5 md:px-6">
           <button
             type="button"
             onClick={() => setShowCancelled((value) => !value)}
-            aria-pressed={showCancelled}
-            title="Цуцлагдсан захиалгыг харах"
-            className={`rounded-lg px-2 py-0.5 text-xs transition ${
+            aria-expanded={showCancelled}
+            title="Цуцлагдсан захиалгын түүх"
+            className={`flex items-center gap-1.5 rounded-lg px-2 py-0.5 text-xs transition ${
               showCancelled
                 ? "bg-sand-200/70 font-medium text-sand-800"
                 : "text-sand-500 hover:text-sand-800"
             }`}
           >
-            Түүх
+            <span aria-hidden className="text-[9px] leading-none">
+              {showCancelled ? "▾" : "▸"}
+            </span>
+            Цуцлагдсан түүх
+            <span className="rounded-full bg-sand-300/60 px-1.5 py-px font-medium tabular-nums text-sand-700">
+              {cancelledHistory.length}
+            </span>
           </button>
+
+          {showCancelled ? (
+            <ul className="mt-1.5 space-y-0.5 pb-1">
+              {cancelledHistory.map((row) => {
+                const startMin = toLocalMinutes(row.startAt);
+                const endLocal = toLocalMinutes(row.endAt);
+                const endMin = endLocal <= startMin ? 24 * 60 : endLocal;
+
+                return (
+                  <li key={row.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clearNewParam();
+                        setDialog({
+                          mode: "edit",
+                          branchId: branch.id,
+                          dateKey,
+                          appointment: row,
+                          siblings: [row],
+                          replacement: null,
+                        });
+                      }}
+                      className="flex w-full flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-lg px-2 py-1 text-left text-xs transition hover:bg-sand-100"
+                    >
+                      <span className="font-mono tabular-nums text-sand-500">
+                        {formatMinutes(startMin)}–{formatMinutes(endMin)}
+                      </span>
+                      <span className="font-medium text-sand-800 line-through">
+                        {row.client.name}
+                      </span>
+                      <span className="text-sand-500">
+                        {staffNamesOf(row)}
+                      </span>
+                      <span className="truncate text-sand-400">
+                        {row.items.map((item) => item.name).join(", ")}
+                      </span>
+                      <span className="ml-auto shrink-0 text-sand-500">
+                        {row.cancelledBy?.name ? `${row.cancelledBy.name} цуцалсан` : "цуцалсан"}
+                        {row.cancelledAt
+                          ? ` · ${formatMinutes(toLocalMinutes(row.cancelledAt))}`
+                          : ""}
+                        {row.cancelReason ? ` · ${row.cancelReason}` : ""}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
         </div>
       ) : null}
 
@@ -836,7 +938,7 @@ export function DayGrid({
                 onDragEndAppointment={endDrag}
                 onDragOverColumn={hoverColumn}
                 onDropInColumn={dropInColumn}
-                onCancel={cancelAppointment}
+                colorOf={colorOf}
                 hiddenClass={hiddenColumn(member.id)}
                 onCreate={(startMin) => {
                   clearNewParam();
@@ -1004,7 +1106,7 @@ function StaffColumn({
   onDragEndAppointment,
   onDragOverColumn,
   onDropInColumn,
-  onCancel,
+  colorOf,
   hiddenClass,
 }: {
   member: DayStaff;
@@ -1030,7 +1132,7 @@ function StaffColumn({
   onDragEndAppointment: () => void;
   onDragOverColumn: (staffId: string, pointerMin: number) => void;
   onDropInColumn: (staffId: string, pointerMin: number) => void;
-  onCancel: (appointment: DayAppointment) => void;
+  colorOf: (appointment: DayAppointment) => string;
   /** Мастер сонгосон үед бусад баганыг нуух ангилал */
   hiddenClass: string;
 }) {
@@ -1188,7 +1290,7 @@ function StaffColumn({
           isDragging={drag?.appointment.id === appointment.id}
           onDragStart={onDragStartAppointment}
           onDragEnd={onDragEndAppointment}
-          onCancel={onCancel}
+          color={colorOf(appointment)}
         />
       ))}
 
@@ -1247,7 +1349,7 @@ function AppointmentBlock({
   isDragging,
   onDragStart,
   onDragEnd,
-  onCancel,
+  color,
 }: {
   appointment: DayAppointment;
   rangeStart: number;
@@ -1262,14 +1364,14 @@ function AppointmentBlock({
   isDragging: boolean;
   onDragStart: (appointment: DayAppointment, grabMin: number) => void;
   onDragEnd: () => void;
-  onCancel: (appointment: DayAppointment) => void;
+  /** Энэ захиалгын өнгө — өдрийн дараалалаар DayGrid оноодог */
+  color: string;
 }) {
   const startMin = toLocalMinutes(appointment.startAt);
   const endLocal = toLocalMinutes(appointment.endAt);
   const endMin = endLocal <= startMin ? 24 * 60 : endLocal;
   const duration = endMin - startMin;
 
-  const color = colorOf(appointment);
   const cancelled = appointment.status === "CANCELLED";
   const noShow = appointment.status === "NO_SHOW";
   const width = 100 / columns;
@@ -1344,7 +1446,7 @@ function AppointmentBlock({
         }
       }}
       title={`${appointment.client.name} · ${formatMinutes(startMin)}–${formatMinutes(endMin)} · ${appointment.items.map((i) => i.name).join(", ")}${grouped ? " · хамтарсан захиалга" : ""}${moneyMark ? ` · ${moneyMark.title}` : ""}${draggable ? " · чирж өөр мастер эсвэл цаг руу зөөнө" : ""}`}
-      className={`group/appt absolute overflow-hidden rounded-lg pl-2 pr-1.5 text-left md:pl-3.5 md:pr-2.5 shadow-[0_1px_2px_rgba(34,32,29,0.06)] ring-1 ring-inset ring-sand-900/5 transition duration-150 hover:z-10 hover:shadow-md focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/50 ${
+      className={`group/appt absolute overflow-hidden rounded-lg pl-2 pr-1.5 text-left md:pl-3.5 md:pr-2.5 shadow-[0_1px_2px_rgba(34,32,29,0.08)] ring-1 ring-inset ring-sand-900/10 transition duration-150 hover:z-10 hover:shadow-md focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/50 ${
         draggable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
       } ${tiny || dense ? "py-0.5" : "py-2"} ${noShow ? "hatched" : ""}`}
       style={{
@@ -1352,14 +1454,14 @@ function AppointmentBlock({
         height,
         left: `calc(${column * width}% + 4px)`,
         width: `calc(${width}% - 8px)`,
-        backgroundColor: tint(color, cancelled ? 5 : 10),
+        backgroundColor: tint(color, cancelled ? 14 : 28),
         opacity: isDragging ? 0.35 : cancelled ? 0.65 : 1,
       }}
     >
       {/* Зүүн талын өнгөт зурвас */}
       <span
         aria-hidden
-        className="absolute inset-y-0 left-0 w-[3.5px] rounded-l-lg"
+        className="absolute inset-y-0 left-0 w-[5px] rounded-l-lg"
         style={{ backgroundColor: color, opacity: cancelled ? 0.5 : 1 }}
       />
 
@@ -1430,7 +1532,7 @@ function AppointmentBlock({
             {appointment.client.name}
           </p>
           {/* Үйлчилгээний нэр — намхан блокт ч ХАСАГДАХГҮЙ, зөвхөн жижигрэнэ */}
-          <p className={`truncate ${serviceClass}`} style={{ color }}>
+          <p className={`truncate pr-5 ${serviceClass}`} style={{ color }}>
             {appointment.items.map((item) => item.name).join(", ")}
           </p>
         </>
@@ -1438,52 +1540,22 @@ function AppointmentBlock({
 
       {/*
         Захиалгын мэдээллийг хуулах — үйлчлүүлэгч рүү баталгаажуулалт илгээхэд.
-        Хулганаар дээгүүр очиход эсвэл гараар товч дээр очиход л гарч ирнэ,
-        ингэснээр хуанли цэвэрхэн харагдана. Хүрэлцэх дэлгэцэд үргэлж харагдана.
-        Богино (22px) блокт багтахгүй тул зөвхөн өндөр блокт гаргана —
-        тэнд захиалгын цонхноос хуулж болно.
+
+        ҮРГЭЛЖ харагдана: өмнө нь зөвхөн хулгана дээгүүр очиход, түүнчлэн зөвхөн
+        ӨНДӨР блокт гардаг байсан тул компьютер дээр өдөр дэлгэцэндээ багтахад
+        (блок намхан болно) товч огт олдохгүй, захиалгаа нээж байж хуулдаг байв.
+        Хажуугийн текстийг дарахгүйн тулд булангаас жижигхэн, бүдэгхэн —
+        дээгүүр нь очиход тодорно.
       */}
       {!tiny ? (
-        <span className="absolute bottom-1 right-1 flex gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/appt:opacity-100 [@media(hover:none)]:opacity-100">
-          {/* Хуулах товч зөвхөн бүтэн блокт — намхан дээр зай эзлэнэ */}
-          {!dense ? (
-            <CopyButton
-              compact
-              label=""
-              title="Захиалгын мэдээллийг хуулах"
-              getText={() => copyTextFor(appointment)}
-              className="flex size-5 items-center justify-center rounded-md border border-sand-300 bg-white/95 text-sand-600 shadow-sm transition hover:bg-sand-100 hover:text-sand-900 md:size-6"
-            />
-          ) : null}
-
-          {/*
-            Нэг товчоор цуцлах — цаг нь тэр даруй сул болно. Андуурсан бол
-            «Түүх»-ээс нээгээд «Сэргээх».
-          */}
-          {draggable ? (
-            <button
-              type="button"
-              title="Цуцлах — энэ цаг сул болно"
-              aria-label={`${appointment.client.name} — захиалгыг цуцлах`}
-              onClick={(event) => {
-                event.stopPropagation();
-                onCancel(appointment);
-              }}
-              className="flex size-5 items-center justify-center rounded-md border border-sand-300 bg-white/95 text-sand-600 shadow-sm transition hover:border-danger-200 hover:bg-danger-50 hover:text-danger-700 md:size-6"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                className="size-3.5"
-                aria-hidden
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-                strokeLinecap="round"
-              >
-                <path d="M6 6 18 18M18 6 6 18" />
-              </svg>
-            </button>
-          ) : null}
+        <span className="absolute bottom-0.5 right-0.5 opacity-70 transition-opacity focus-within:opacity-100 group-hover/appt:opacity-100 md:bottom-1 md:right-1">
+          <CopyButton
+            compact
+            label=""
+            title="Захиалгын мэдээллийг хуулах"
+            getText={() => copyTextFor(appointment)}
+            className="flex size-[18px] items-center justify-center rounded-md border border-sand-300 bg-white/90 text-sand-500 shadow-sm transition hover:border-sand-400 hover:bg-white hover:text-sand-900 md:size-5"
+          />
         </span>
       ) : null}
     </div>

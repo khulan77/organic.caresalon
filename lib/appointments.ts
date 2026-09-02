@@ -2,9 +2,10 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import { effectivePrice } from "@/lib/pricing";
-import { ACTIVE_STATUSES } from "@/lib/labels";
+import { ACTIVE_STATUSES, formatDuration } from "@/lib/labels";
 import {
   addDays,
+  dayRangeUtc,
   formatMinutes,
   localToUtc,
   todayKey,
@@ -12,6 +13,12 @@ import {
   weekdayOf,
   type DateKey,
 } from "@/lib/time";
+import {
+  intersectIntervals,
+  startTimesIn,
+  subtractIntervals,
+  type Interval,
+} from "@/lib/free-slots";
 
 /**
  * Захиалгыг хэдэн хоногийн дараа хүртэл бүртгэхийг зөвшөөрөх.
@@ -232,6 +239,178 @@ export async function validateSlot(input: SlotInput): Promise<SlotIssue[]> {
   }
 
   return issues;
+}
+
+/** Цаг сонголтын хамгийн нарийн алхам — хуанлийн нүдтэй ижил 30 минут. */
+export const SLOT_STEP_MIN = 30;
+
+/**
+ * Сул цагуудын хоорондын АНХДАГЧ зай.
+ *
+ * Салонд үйлчилгээ хамгийн багадаа нэг цаг үргэлжилдэг тул 30 минут тутам
+ * санал болгох нь утгагүй — сонгосон үйлчилгээнийхээ уртаар зай авна
+ * (доод тал нь 1 цаг). Ингэснээр захиалгууд ар араасаа шахуу таарна.
+ */
+export function defaultSlotStep(durationMin: number): number {
+  const rounded = Math.ceil(durationMin / SLOT_STEP_MIN) * SLOT_STEP_MIN;
+  return Math.max(2 * SLOT_STEP_MIN, rounded);
+}
+
+export type FreeSlots = {
+  /** Захиалга багтах эхлэх цагууд, локал минутаар */
+  slots: number[];
+  /** Сул цаг олдоогүй бол ЯАГААД — хоосон дэлгэц тайлбаргүй үлдэхгүй */
+  reason: string | null;
+};
+
+/**
+ * Тухайн ажилтан (эсвэл зэрэг ажиллах хэдэн ажилтан) дээр захиалга багтах
+ * ЭХЛЭХ ЦАГУУДЫГ гаргана.
+ *
+ * `validateSlot`-той ЯГ ижил дүрмээр: салбарын ажлын цаг, ажилтны ээлж,
+ * чөлөө, идэвхтэй захиалгууд. Ялгаа нь — энэ нь нэг цагийг шалгахын оронд
+ * боломжтой бүх цагийг урьдчилж санал болгодог.
+ */
+export async function findFreeStartTimes(input: {
+  branchId: string;
+  dateKey: DateKey;
+  /** Бүлгээр захиалбал бүх ажилтан ЗЭРЭГ сул байх ёстой */
+  staffIds: string[];
+  durationMin: number;
+  /** Сул цагуудын хоорондын зай — өгөхгүй бол `defaultSlotStep` */
+  stepMin?: number;
+  /** Засварлаж буй бүлгийн мөрүүд — өөрсдийгөө завгүй гэж үзэхгүй */
+  excludeAppointmentIds?: string[];
+  /** Зөвхөн ШИНЭ захиалгад — өнгөрсөн цагийг санал болгохгүй */
+  rejectPastTime?: boolean;
+}): Promise<FreeSlots> {
+  const { branchId, dateKey, durationMin } = input;
+  const staffIds = [...new Set(input.staffIds)].filter(Boolean);
+
+  if (staffIds.length === 0) {
+    return { slots: [], reason: "Ажилтан сонгоно уу." };
+  }
+  if (!Number.isInteger(durationMin) || durationMin <= 0) {
+    return { slots: [], reason: "Үйлчилгээгээ сонгоно уу." };
+  }
+
+  const today = todayKey();
+  if (dateKey < today) {
+    return { slots: [], reason: "Өнгөрсөн өдөрт цаг захиалах боломжгүй." };
+  }
+  if (dateKey > addDays(today, MAX_BOOKING_DAYS)) {
+    return { slots: [], reason: "Огноо хэт хол байна." };
+  }
+
+  const dateOnly = new Date(`${dateKey}T00:00:00.000Z`);
+  const { start: dayStart, end: dayEnd } = dayRangeUtc(dateKey);
+
+  const [branch, closure, staff, busy] = await Promise.all([
+    prisma.branch.findUnique({
+      where: { id: branchId },
+      select: { openMin: true, closeMin: true },
+    }),
+    prisma.branchClosure.findUnique({
+      where: { branchId_date: { branchId, date: dateOnly } },
+      select: { isClosed: true, openMin: true, closeMin: true, reason: true },
+    }),
+    prisma.staff.findMany({
+      where: { id: { in: staffIds }, branchId, isActive: true },
+      select: {
+        id: true,
+        name: true,
+        schedules: {
+          where: { weekday: weekdayOf(dateKey) },
+          select: { isDayOff: true, startMin: true, endMin: true },
+        },
+        timeOffs: {
+          where: { date: dateOnly },
+          select: { startMin: true, endMin: true },
+        },
+      },
+    }),
+    prisma.appointment.findMany({
+      where: {
+        staffId: { in: staffIds },
+        status: { in: ACTIVE_STATUSES },
+        startAt: { lt: dayEnd },
+        endAt: { gt: dayStart },
+        ...(input.excludeAppointmentIds?.length
+          ? { id: { notIn: input.excludeAppointmentIds } }
+          : {}),
+      },
+      select: { staffId: true, startAt: true, endAt: true },
+    }),
+  ]);
+
+  if (!branch) return { slots: [], reason: "Салбар олдсонгүй." };
+  if (staff.length !== staffIds.length) {
+    return { slots: [], reason: "Ажилтан олдсонгүй." };
+  }
+  if (closure?.isClosed) {
+    return {
+      slots: [],
+      reason: closure.reason
+        ? `Тухайн өдөр салбар хаалттай (${closure.reason}).`
+        : "Тухайн өдөр салбар хаалттай.",
+    };
+  }
+
+  const openMin = closure?.openMin ?? branch.openMin;
+  const closeMin = closure?.closeMin ?? branch.closeMin;
+
+  // Ажилтан бүрийн сул муж — бүгдийн ДАВХЦАЛ нь бүлгийн сул цаг
+  let free: Interval[] = [{ startMin: openMin, endMin: closeMin }];
+
+  for (const member of staff) {
+    const shift = member.schedules[0];
+    if (!shift || shift.isDayOff) {
+      return { slots: [], reason: `${member.name} тухайн өдөр амралттай.` };
+    }
+
+    const cuts: Interval[] = [
+      ...member.timeOffs.map((off) => ({
+        startMin: off.startMin ?? 0,
+        endMin: off.endMin ?? 24 * 60,
+      })),
+      ...busy
+        .filter((appt) => appt.staffId === member.id)
+        .map((appt) => ({
+          // Шөнө дундыг давсан захиалгыг тухайн өдрийн мужид хумина
+          startMin: appt.startAt < dayStart ? 0 : toLocalMinutes(appt.startAt),
+          endMin: appt.endAt > dayEnd ? 24 * 60 : toLocalMinutes(appt.endAt),
+        })),
+    ];
+
+    free = intersectIntervals(
+      free,
+      subtractIntervals(
+        [{ startMin: shift.startMin, endMin: shift.endMin }],
+        cuts,
+      ),
+    );
+  }
+
+  // Өнөөдөр бол өнгөрсөн цагийг санал болгохгүй — сервер ч татгалзана
+  const notBefore =
+    input.rejectPastTime && dateKey === today
+      ? toLocalMinutes(new Date()) - PAST_GRACE_MIN + 1
+      : 0;
+
+  const step =
+    input.stepMin && input.stepMin >= SLOT_STEP_MIN
+      ? input.stepMin
+      : defaultSlotStep(durationMin);
+
+  const slots = startTimesIn(free, durationMin, step, notBefore);
+
+  return {
+    slots,
+    reason:
+      slots.length > 0
+        ? null
+        : `Энэ өдөр ${formatDuration(durationMin)} багтах сул цаг үлдээгүй байна.`,
+  };
 }
 
 /**

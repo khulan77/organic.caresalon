@@ -8,7 +8,12 @@ import {
   getActionUser,
 } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { resolveBooking, validateSlot } from "@/lib/appointments";
+import {
+  findFreeStartTimes,
+  resolveBooking,
+  validateSlot,
+  type FreeSlots,
+} from "@/lib/appointments";
 import { searchClients } from "@/lib/queries";
 import { trimOldClients } from "@/lib/clients";
 import { isDateKey, localToUtc } from "@/lib/time";
@@ -783,4 +788,37 @@ export async function deletePayment(paymentId: string): Promise<ActionResult> {
 export async function findClients(query: string) {
   await getActionUser();
   return searchClients(query);
+}
+
+/**
+ * Захиалгын цонхны «Эхлэх цаг» хэсэгт — тухайн ажилтны СУЛ ЦАГУУД.
+ *
+ * Огноо, ажилтан, үйлчилгээ солигдох бүрд дахин дуудагдана. Зөвхөн уншина,
+ * иймд харах эрхтэй хэн ч дуудаж болно — хадгалахад сервер дахин шалгана.
+ */
+export async function freeStartTimes(input: {
+  branchId: string;
+  dateKey: string;
+  staffIds: string[];
+  durationMin: number;
+  /** Сул цагуудын хоорондын зай — өгөхгүй бол үйлчилгээний уртаар */
+  stepMin?: number;
+  excludeAppointmentIds?: string[];
+  rejectPastTime?: boolean;
+}): Promise<FreeSlots> {
+  await getActionUser();
+
+  if (!isDateKey(input.dateKey)) {
+    return { slots: [], reason: "Огноо буруу байна." };
+  }
+
+  return findFreeStartTimes({
+    branchId: input.branchId,
+    dateKey: input.dateKey,
+    staffIds: input.staffIds,
+    durationMin: input.durationMin,
+    stepMin: input.stepMin,
+    excludeAppointmentIds: input.excludeAppointmentIds,
+    rejectPastTime: input.rejectPastTime,
+  });
 }
