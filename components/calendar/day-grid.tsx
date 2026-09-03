@@ -18,6 +18,12 @@ import type {
 } from "@/lib/queries";
 import type { AppointmentStatus } from "@/lib/generated/prisma/enums";
 import { formatMinutes, toDateKey, toLocalMinutes } from "@/lib/time";
+import {
+  activeTimeOffs,
+  effectiveShift,
+  isMarkedOff,
+  isRestingAllDay,
+} from "@/lib/day-shift";
 import { formatPrice } from "@/lib/labels";
 import { buildBookingText } from "@/lib/booking-text";
 import { CopyButton } from "@/components/ui/copy-button";
@@ -156,20 +162,6 @@ const COLOR_STRIDE = 5;
  */
 function tint(color: string, percent: number): string {
   return `color-mix(in srgb, ${color} ${percent}%, white)`;
-}
-
-/**
- * Тухайн өдөр огт ажиллахгүй эсэх — долоо хоногийн хуваарь нь амралттай,
- * эсвэл ээлжийг бүтэн хамарсан чөлөө авсан.
- */
-function isRestingAllDay(member: DayStaff): boolean {
-  const shift = member.schedules[0];
-  if (!shift || shift.isDayOff) return true;
-  return member.timeOffs.some(
-    (off) =>
-      (off.startMin ?? 0) <= shift.startMin &&
-      (off.endMin ?? 24 * 60) >= shift.endMin,
-  );
 }
 
 /** "Сарнай" → "СА" */
@@ -481,13 +473,14 @@ export function DayGrid({
   const defaultCreate = useMemo<DialogState | null>(() => {
     if (!canWrite) return null;
     const working = visibleStaff.find((m) => !isRestingAllDay(m));
-    if (!working) return null;
+    const shift = working ? effectiveShift(working) : null;
+    if (!working || !shift) return null;
     return {
       mode: "create",
       branchId: branch.id,
       dateKey,
       staffId: working.id,
-      startMin: Math.max(openMin, working.schedules[0].startMin),
+      startMin: Math.max(openMin, shift.startMin),
     };
   }, [visibleStaff, branch.id, dateKey, openMin, canWrite]);
 
@@ -851,8 +844,9 @@ export function DayGrid({
           >
             <div className={GUTTER} />
             {visibleStaff.map((member) => {
-              const schedule = member.schedules[0];
-              const dayOff = !schedule || schedule.isDayOff;
+              // Амралттай ч захиалгатай тул баганад үлдсэн ажилтан
+              const dayOff = isRestingAllDay(member);
+              const markedOff = isMarkedOff(member);
               const day = money.perStaff.get(member.id);
               const count = day?.count ?? 0;
               const earned = day?.amount ?? 0;
@@ -890,7 +884,11 @@ export function DayGrid({
                         dayOff ? "text-sand-400" : "text-sand-500"
                       }`}
                     >
-                      {dayOff ? "Амралттай" : `${count} захиалга`}
+                      {dayOff
+                        ? markedOff
+                          ? "Амарсан"
+                          : "Амралттай"
+                        : `${count} захиалга`}
                     </p>
                     {/* Орлого зөвхөн том дэлгэцэнд — утсанд хуанли л харагдана */}
                     {earned > 0 ? (
@@ -1164,8 +1162,8 @@ function StaffColumn({
   /** Чөлөө болиулах — эрхгүй хэрэглэгчид `null` */
   onRemoveTimeOff: ((timeOffId: string) => void) | null;
 }) {
-  const schedule = member.schedules[0];
-  const dayOff = !schedule || schedule.isDayOff;
+  const shift = effectiveShift(member);
+  const dayOff = shift === null;
   // Амралттай ч захиалгатай тул харагдаж буй багана — шинэ цаг оруулахыг хаана
   const locked = dayOff || !canWrite;
   const laidOut = useMemo(() => layoutAppointments(appointments), [appointments]);
@@ -1183,8 +1181,8 @@ function StaffColumn({
       «энэ цаг болохгүй» гэж хэлэхээс дээр.
     */
     const startMin = Math.max(
-      schedule?.startMin ?? rangeStart,
-      Math.min(snapped, (schedule?.endMin ?? rangeEnd) - SLOT_STEP),
+      shift?.startMin ?? rangeStart,
+      Math.min(snapped, (shift?.endMin ?? rangeEnd) - SLOT_STEP),
     );
     onCreate(startMin);
   }
@@ -1240,12 +1238,12 @@ function StaffColumn({
         <>
           <Shade
             from={rangeStart}
-            to={schedule.startMin}
+            to={shift.startMin}
             rangeStart={rangeStart}
             pxPerMin={pxPerMin}
           />
           <Shade
-            from={schedule.endMin}
+            from={shift.endMin}
             to={rangeEnd}
             rangeStart={rangeStart}
             pxPerMin={pxPerMin}
@@ -1281,7 +1279,7 @@ function StaffColumn({
         Чөлөө — дарж захиалга оруулахыг ЭНД зогсооно. Захиалгын блокууд эдгээрээс
         хойш зурагдах тул тэдгээр дээр дарж нээх нь хэвээрээ.
       */}
-      {member.timeOffs.map((off) => {
+      {(shift ? activeTimeOffs(member, member.timeOffs, shift) : member.timeOffs).map((off) => {
         const offStart = off.startMin ?? 0;
         const offEnd = off.endMin ?? 24 * 60;
         const height = (offEnd - offStart) * pxPerMin;

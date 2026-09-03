@@ -18,6 +18,9 @@ import { addDays, todayKey, weekdayOf, type DateKey } from "@/lib/time";
  *
  * ӨНӨӨДРӨӨС ХОЙШХ өдөр нь `FUTURE` — хараахан болоогүй тул ажилласан өдөрт
  * тоологдохгүй. Гараар тэмдэглэсэн бол хүний шийдвэрийг барина.
+ *
+ * Тэмдэглэгээ нь ХУАНЛИТАЙ холбоотой: «амарсан» гэж тэмдэглэсэн ажилтан тэр
+ * өдрийн хуанлиас алга болж, шинэ захиалга ч авахгүй болно (`lib/day-shift`).
  */
 
 export type DayState = "WORK" | "DAY_OFF" | "FUTURE";
@@ -31,6 +34,12 @@ export type TimesheetCell = {
   note: string | null;
   /** Гараар тэмдэглэсэн эсэх — хуваариар бодогдсоноос ялгахад */
   marked: boolean;
+  /**
+   * ТэмдэглэгээГҮЙ бол энэ өдөр юу болох байсан бэ — хуваарь, хаалт, чөлөөгөөр
+   * бодогдсон СУУРЬ төлөв. Тэмдэглэгээг арилгахад нүд юу болохыг клиент урьдчилж
+   * мэдэхэд хэрэгтэй (`marked` худал бол `state`-тэй үргэлж тэнцүү).
+   */
+  base: DayState;
 };
 
 export type TimesheetRow = {
@@ -160,83 +169,69 @@ export async function getTimesheet(input: {
     );
 
     const cells = days.map<TimesheetCell>((dateKey) => {
-      const mark = markByDay.get(dateKey);
       const shift = byWeekday.get(weekdayOf(dateKey));
       const startMin = shift?.startMin ?? 600;
       const endMin = shift?.endMin ?? 1140;
       const minutes = Math.max(0, endMin - startMin);
 
-      // 1. Гараар тавьсан нь бүхнээс дээгүүр — ресепшний шийдвэр
+      /**
+       * СУУРЬ төлөв — гараар тэмдэглээгүй бол өдөр юу болох вэ.
+       * Тэмдэглэгээ үүнийг дарна, гэхдээ арилгах үед буцаад энэ нь үлдэнэ.
+       */
+      const base = ((): { state: DayState; note: string | null } => {
+        // 1. Салбар хаалттай өдөр — амарсанд тооцно
+        const closureReason = closedBy.get(`${member.branchId}|${dateKey}`);
+        if (closureReason !== undefined) {
+          return {
+            state: "DAY_OFF",
+            note: closureReason ?? "Салбар хаалттай",
+          };
+        }
+
+        // 2. Долоо хоногийн хуваарийн амралт
+        if (!shift || shift.isDayOff) return { state: "DAY_OFF", note: null };
+
+        /*
+          3. Бүтэн өдрийн чөлөө — амарсанд тооцно. ХЭСЭГЧИЛСЭН чөлөө (2 цаг
+          эмнэлэг г.м.) тооцоонд ОРОХГҮЙ: тэр өдөр ажилласан хэвээр.
+        */
+        const offs = offsByDay.get(dateKey) ?? [];
+        const wholeDayOff = offs.find(
+          (off) =>
+            (off.startMin ?? 0) <= startMin && (off.endMin ?? 24 * 60) >= endMin,
+        );
+        if (wholeDayOff) return { state: "DAY_OFF", note: wholeDayOff.reason };
+
+        // 4. Ирээдүйн ажлын өдөр — хараахан ажиллаагүй, зөвхөн хуваарь
+        if (dateKey > today) return { state: "FUTURE", note: null };
+
+        return {
+          state: "WORK",
+          note: offs.find((off) => off.reason)?.reason ?? null,
+        };
+      })();
+
+      // Гараар тавьсан нь бүхнээс дээгүүр — ресепшний шийдвэр
+      const mark = markByDay.get(dateKey);
       if (mark) {
         const worked = mark.kind === "WORK";
         return {
           dateKey,
           state: worked ? "WORK" : "DAY_OFF",
           minutes: worked ? minutes : 0,
-          note: mark.note,
+          note: mark.note ?? base.note,
           marked: true,
-        };
-      }
-
-      // 2. Салбар хаалттай өдөр — амарсанд тооцно
-      const closureReason = closedBy.get(`${member.branchId}|${dateKey}`);
-      if (closureReason !== undefined) {
-        return {
-          dateKey,
-          state: "DAY_OFF",
-          minutes: 0,
-          note: closureReason ?? "Салбар хаалттай",
-          marked: false,
-        };
-      }
-
-      // 3. Долоо хоногийн хуваарийн амралт
-      if (!shift || shift.isDayOff) {
-        return {
-          dateKey,
-          state: "DAY_OFF",
-          minutes: 0,
-          note: null,
-          marked: false,
-        };
-      }
-
-      /*
-        4. Бүтэн өдрийн чөлөө — амарсанд тооцно. ХЭСЭГЧИЛСЭН чөлөө (2 цаг
-        эмнэлэг г.м.) тооцоонд ОРОХГҮЙ: тэр өдөр ажилласан хэвээр.
-      */
-      const offs = offsByDay.get(dateKey) ?? [];
-      const wholeDayOff = offs.find(
-        (off) =>
-          (off.startMin ?? 0) <= startMin && (off.endMin ?? 24 * 60) >= endMin,
-      );
-      if (wholeDayOff) {
-        return {
-          dateKey,
-          state: "DAY_OFF",
-          minutes: 0,
-          note: wholeDayOff.reason,
-          marked: false,
-        };
-      }
-
-      // 5. Ирээдүйн ажлын өдөр — хараахан ажиллаагүй, зөвхөн хуваарь
-      if (dateKey > today) {
-        return {
-          dateKey,
-          state: "FUTURE",
-          minutes: 0,
-          note: null,
-          marked: false,
+          base: base.state,
         };
       }
 
       return {
         dateKey,
-        state: "WORK",
-        minutes,
-        note: offs.find((off) => off.reason)?.reason ?? null,
+        state: base.state,
+        minutes: base.state === "WORK" ? minutes : 0,
+        note: base.note,
         marked: false,
+        base: base.state,
       };
     });
 

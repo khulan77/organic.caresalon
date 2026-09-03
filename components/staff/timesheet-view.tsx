@@ -2,7 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { startTransition, useOptimistic, useState, useTransition } from "react";
-import type { TimesheetCell, TimesheetRow } from "@/lib/timesheet";
+import type { DayState, TimesheetCell, TimesheetRow } from "@/lib/timesheet";
 import type { DayMarkKind } from "@/lib/generated/prisma/enums";
 import { MONTHS, WEEKDAYS_SHORT } from "@/lib/labels";
 import { weekdayOf } from "@/lib/time";
@@ -15,9 +15,9 @@ type BranchOption = { id: string; name: string };
 /**
  * Нүдний тэмдэглэгээ ба өнгө.
  *
- * Хоёрхон утга: ажилласан (ногоон ✓) эсвэл амарсан (шар А). Цалин өдрөөр
- * бодогддог тул илүү нарийвчлал шаардлагагүй. Ирээгүй өдөр нь утга биш —
- * бүдэг цэг, дарж тэмдэглэхийг хүлээж байна.
+ * Ажилласан (ногоон ✓), амарсан (шар А), эсвэл хараахан болоогүй (бүдэг ·).
+ * Цалин өдрөөр бодогддог тул эхний хоёроос илүү нарийвчлал шаардлагагүй —
+ * «·» нь утга биш, тэмдэглэгээгүй өдөр.
  */
 const CELL_STYLE: Record<
   TimesheetCell["state"],
@@ -41,14 +41,39 @@ const CELL_STYLE: Record<
 };
 
 /**
- * Нүд дээр дарахад ямар төлөв рүү шилжих вэ — ажилласан ↔ амарсан.
- * Ирээгүй өдрийг эхлээд «ажилласан» гэж тэмдэглэнэ (хуваариар нь).
+ * Нүдний эргэлт: ✓ ажилласан → А амарсан → · хараахан болоогүй (тэмдэглэгээ
+ * арилна) → ✓ … `null` нь тэмдэглэгээг устгаж, тухайн өдрийг буцаад долоо
+ * хоногийн хуваариараа бодогдох болгоно.
  */
-const NEXT_MARK: Record<TimesheetCell["state"], DayMarkKind> = {
-  WORK: "DAY_OFF",
-  DAY_OFF: "WORK",
-  FUTURE: "WORK",
-};
+const CYCLE: (DayMarkKind | null)[] = ["WORK", "DAY_OFF", null];
+
+/** Тухайн сонголт нүдэн дээр ямар харагдах вэ. */
+function displayOf(cell: TimesheetCell, choice: DayMarkKind | null): DayState {
+  if (choice === null) return cell.base;
+  return choice === "WORK" ? "WORK" : "DAY_OFF";
+}
+
+/**
+ * Дарахад ямар тэмдэглэгээ тавих вэ.
+ *
+ * Эргэлтээс нүдийг ӨӨРЧИЛДӨГ хамгийн ойрх алхмыг сонгоно: хуваариараа ажлын
+ * өдөр дээр «тэмдэглэгээгүй» ба «ажилласан» хоёр адилхан харагддаг тул тэр
+ * алхмыг алгасна — дарах бүрт нүд үргэлж өөрчлөгдөнө.
+ */
+function nextChoice(cell: TimesheetCell): DayMarkKind | null {
+  const current: DayMarkKind | null = cell.marked
+    ? cell.state === "WORK"
+      ? "WORK"
+      : "DAY_OFF"
+    : null;
+
+  const from = CYCLE.indexOf(current);
+  for (let step = 1; step <= CYCLE.length; step++) {
+    const candidate = CYCLE[(from + step) % CYCLE.length];
+    if (displayOf(cell, candidate) !== cell.state) return candidate;
+  }
+  return current;
+}
 
 /**
  * Цалин 15 хоногоор олгогддог тул сарыг хоёр хуваана.
@@ -122,10 +147,10 @@ export function TimesheetView({
   const [markError, setMarkError] = useState<string[] | null>(null);
   const [, startMark] = useTransition();
   const [markPatch, patchMark] = useOptimistic(
-    {} as Record<string, DayMarkKind>,
+    {} as Record<string, DayMarkKind | null>,
     (
-      current: Record<string, DayMarkKind>,
-      next: { key: string; kind: DayMarkKind },
+      current: Record<string, DayMarkKind | null>,
+      next: { key: string; kind: DayMarkKind | null },
     ) => ({ ...current, [next.key]: next.kind }),
   );
 
@@ -139,7 +164,7 @@ export function TimesheetView({
 
   function cycle(row: TimesheetRow, cell: TimesheetCell) {
     if (!canEdit(row)) return;
-    const kind = NEXT_MARK[cell.state];
+    const kind = nextChoice(cell);
 
     setMarkError(null);
     startMark(async () => {
@@ -155,8 +180,11 @@ export function TimesheetView({
 
   /** Дөнгөж дарсан нүдийг сервер бичиж амжаагүй байхад нь харуулна. */
   function patched(row: TimesheetRow, cell: TimesheetCell): TimesheetCell {
-    const kind = markPatch[`${row.staffId}|${cell.dateKey}`];
-    if (!kind) return cell;
+    const key = `${row.staffId}|${cell.dateKey}`;
+    if (!(key in markPatch)) return cell;
+    const kind = markPatch[key];
+    // Тэмдэглэгээ арилгасан — нүд суурь төлөв рүүгээ буцна
+    if (kind === null) return { ...cell, state: cell.base, marked: false };
     return {
       ...cell,
       state: kind === "WORK" ? "WORK" : "DAY_OFF",
@@ -473,9 +501,12 @@ export function TimesheetView({
               <strong className="font-medium text-sand-700">
                 Нүд дээр дарж солино:
               </strong>{" "}
-              ✓ Ажилласан ↔ А Амарсан. Амралтын өдөр долоо хоног бүр өөр байдаг
-              тул гараар тэмдэглэсэн нь долоо хоногийн хуваарийг дардаг —
-              хүрээтэй нүд нь гараар тавьсныг заана.{" "}
+              ✓ Ажилласан → А Амарсан → · Хараахан болоогүй (тэмдэглэгээ арилна).
+              Амралтын өдөр долоо хоног бүр өөр байдаг тул гараар тэмдэглэсэн нь
+              долоо хоногийн хуваарийг дардаг — хүрээтэй нүд нь гараар тавьсныг
+              заана. <strong className="font-medium text-sand-700">А</strong> гэж
+              тэмдэглэсэн ажилтан тэр өдрийн ХУАНЛИАС алга болж, шинэ захиалга
+              авахаа болино.{" "}
             </>
           ) : null}
           Цалин ӨДРӨӨР бодогддог тул нүд бүр ажилласан эсвэл амарсан хоёрын нэг

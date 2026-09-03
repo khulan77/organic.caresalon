@@ -7,6 +7,7 @@ import {
   type DaySchedule,
 } from "@/lib/queries";
 import { formatPrice } from "@/lib/labels";
+import { effectiveShift } from "@/lib/day-shift";
 import { isDateKey, todayKey } from "@/lib/time";
 import { CalendarHeader } from "@/components/calendar/calendar-header";
 import {
@@ -111,13 +112,14 @@ export default async function CalendarPage(props: PageProps<"/calendar">) {
 
 /** Өдрийн хураангуй — ачаалал, сул цаг. */
 function dayStats(schedule: DaySchedule): StatItem[] {
-  const working = schedule.staff.filter(
-    (member) => member.schedules[0] && !member.schedules[0].isDayOff,
-  );
+  // Цагийн бүртгэлийн тэмдэглэгээ хүртэл тооцсон бодит ээлжүүд
+  const working = schedule.staff.flatMap((member) => {
+    const shift = effectiveShift(member);
+    return shift ? [{ member, shift }] : [];
+  });
 
   // Боломжит нийт минут — ажиллах мастеруудын цагаас чөлөөг хасна
-  const capacityMinutes = working.reduce((sum, member) => {
-    const shift = member.schedules[0];
+  const capacityMinutes = working.reduce((sum, { member, shift }) => {
     const offMinutes = member.timeOffs.reduce((offSum, off) => {
       const start = Math.max(off.startMin ?? 0, shift.startMin);
       const end = Math.min(off.endMin ?? 24 * 60, shift.endMin);

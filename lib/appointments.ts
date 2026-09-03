@@ -13,6 +13,7 @@ import {
   weekdayOf,
   type DateKey,
 } from "@/lib/time";
+import { activeTimeOffs, effectiveShift, isMarkedOff } from "@/lib/day-shift";
 import {
   intersectIntervals,
   startTimesIn,
@@ -121,6 +122,11 @@ export async function validateSlot(input: SlotInput): Promise<SlotIssue[]> {
       timeOffs: {
         where: { date: new Date(`${dateKey}T00:00:00.000Z`) },
       },
+      // Цагийн бүртгэлийн гар тэмдэглэгээ — хуваарийг дардаг
+      dayMarks: {
+        where: { date: new Date(`${dateKey}T00:00:00.000Z`) },
+        select: { kind: true },
+      },
     },
   });
 
@@ -168,22 +174,39 @@ export async function validateSlot(input: SlotInput): Promise<SlotIssue[]> {
     });
   }
 
-  // 5. Ажилтны долоо хоногийн хуваарь
+  /*
+    5. Ажилтны ээлж — цагийн бүртгэлийн тэмдэглэгээ ба долоо хоногийн хуваарь.
+
+    Ресепшн цагийн бүртгэл дээр «амарсан» гэж тэмдэглэсэн бол тэр өдөр
+    захиалга АВАХГҮЙ: хуанли дээр ч тэр ажилтны багана байхгүй.
+  */
+  const shift = effectiveShift(staff);
   const schedule = staff.schedules[0];
-  if (!schedule || schedule.isDayOff) {
+
+  if (isMarkedOff(staff)) {
     issues.push({
       code: "STAFF_DAY_OFF",
-      message: `${staff.name} тухайн өдөр амралттай.`,
+      message: `${staff.name} тухайн өдөр амарсан гэж цагийн бүртгэлд тэмдэглэгдсэн байна.`,
     });
-  } else if (startMin < schedule.startMin || endMin > schedule.endMin) {
+  } else if (!shift) {
+    // Бүтэн өдрийн чөлөөг доорх 6-р шалгалт нэрлэнэ — давхардуулж хэлэхгүй
+    if (!schedule || schedule.isDayOff) {
+      issues.push({
+        code: "STAFF_DAY_OFF",
+        message: `${staff.name} тухайн өдөр амралттай.`,
+      });
+    }
+  } else if (startMin < shift.startMin || endMin > shift.endMin) {
     issues.push({
       code: "STAFF_HOURS",
-      message: `${staff.name}-ийн ажлын цаг ${formatMinutes(schedule.startMin)}–${formatMinutes(schedule.endMin)}. Сонгосон цаг багтахгүй байна.`,
+      message: `${staff.name}-ийн ажлын цаг ${formatMinutes(shift.startMin)}–${formatMinutes(shift.endMin)}. Сонгосон цаг багтахгүй байна.`,
     });
   }
 
   // 6. Чөлөө / амралт
-  for (const timeOff of staff.timeOffs) {
+  for (const timeOff of shift
+    ? activeTimeOffs(staff, staff.timeOffs, shift)
+    : staff.timeOffs) {
     const offStart = timeOff.startMin ?? 0;
     const offEnd = timeOff.endMin ?? 24 * 60;
     if (startMin < offEnd && endMin > offStart) {
@@ -327,6 +350,10 @@ export async function findFreeStartTimes(input: {
           where: { date: dateOnly },
           select: { startMin: true, endMin: true },
         },
+        dayMarks: {
+          where: { date: dateOnly },
+          select: { kind: true },
+        },
       },
     }),
     prisma.appointment.findMany({
@@ -363,13 +390,19 @@ export async function findFreeStartTimes(input: {
   let free: Interval[] = [{ startMin: openMin, endMin: closeMin }];
 
   for (const member of staff) {
-    const shift = member.schedules[0];
-    if (!shift || shift.isDayOff) {
-      return { slots: [], reason: `${member.name} тухайн өдөр амралттай.` };
+    // Цагийн бүртгэлийн тэмдэглэгээг тооцсон бодит ээлж
+    const shift = effectiveShift(member);
+    if (!shift) {
+      return {
+        slots: [],
+        reason: isMarkedOff(member)
+          ? `${member.name} тухайн өдөр амарсан гэж тэмдэглэгдсэн байна.`
+          : `${member.name} тухайн өдөр амралттай.`,
+      };
     }
 
     const cuts: Interval[] = [
-      ...member.timeOffs.map((off) => ({
+      ...activeTimeOffs(member, member.timeOffs, shift).map((off) => ({
         startMin: off.startMin ?? 0,
         endMin: off.endMin ?? 24 * 60,
       })),

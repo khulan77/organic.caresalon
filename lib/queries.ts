@@ -55,6 +55,12 @@ export async function getDaySchedule(branchId: string, dateKey: DateKey) {
           where: { date: dateOnly },
           select: { id: true, startMin: true, endMin: true, reason: true },
         },
+        // Цагийн бүртгэл дээр гараар тавьсан тэмдэглэгээ — хуваарийг дардаг.
+        // Амралт гэж тэмдэглэсэн ажилтан хуанлиас алга болно.
+        dayMarks: {
+          where: { date: dateOnly },
+          select: { kind: true, note: true },
+        },
       },
     }),
     prisma.appointment.findMany({
