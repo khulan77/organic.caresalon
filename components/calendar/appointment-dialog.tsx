@@ -55,6 +55,13 @@ export type DialogState =
       dateKey: string;
       staffId: string;
       startMin: number;
+      /**
+       * ДАВХАР ЗАХИАЛГА урьдчилан асаалттай нээгдэх эсэх.
+       *
+       * Хуанли дээрх захиалгын «＋» товчноос — мастер завгүй байхад орж ирсэн
+       * үйлчлүүлэгчийг тэр цаг дээр нь шууд бүртгэнэ.
+       */
+      allowOverlap?: boolean;
     }
   | {
       mode: "edit";
@@ -225,7 +232,7 @@ export function AppointmentDialog({
    * цагууд ч сул цагийн жагсаалтад гарч ирнэ.
    */
   const [allowOverlap, setAllowOverlap] = useState(
-    editing?.allowOverlap ?? false,
+    editing?.allowOverlap ?? (state.mode === "create" && state.allowOverlap),
   );
 
   /**

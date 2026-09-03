@@ -955,7 +955,7 @@ export function DayGrid({
                 colorOf={colorOf}
                 onConfirm={toggleConfirmed}
                 onRemoveTimeOff={canWrite ? removeTimeOff : null}
-                onCreate={(startMin) => {
+                onCreate={(startMin, allowOverlap) => {
                   clearNewParam();
                   setDialog({
                     mode: "create",
@@ -963,6 +963,7 @@ export function DayGrid({
                     dateKey,
                     staffId: member.id,
                     startMin,
+                    allowOverlap,
                   });
                 }}
                 onOpen={(appointment) => {
@@ -1095,7 +1096,9 @@ export function DayGrid({
           key={
             activeDialog.mode === "edit"
               ? activeDialog.appointment.id
-              : `${activeDialog.staffId}-${activeDialog.startMin}`
+              : `${activeDialog.staffId}-${activeDialog.startMin}-${
+                  activeDialog.allowOverlap ? "davhar" : "engiin"
+                }`
           }
           state={activeDialog}
           staff={visibleStaff}
@@ -1148,7 +1151,8 @@ function StaffColumn({
   nowMin: number | null;
   canWrite: boolean;
   copyTextFor: (appointment: DayAppointment) => string;
-  onCreate: (startMin: number) => void;
+  /** `allowOverlap` — завгүй цаг дээр зориуд давхар захиалга нээх */
+  onCreate: (startMin: number, allowOverlap?: boolean) => void;
   onOpen: (appointment: DayAppointment) => void;
   drag: DragState | null;
   /** Энэ багана дээр буулгавал эхлэх цаг — өөр багана дээр байвал `null` */
@@ -1353,6 +1357,9 @@ function StaffColumn({
           onDragEnd={onDragEndAppointment}
           color={colorOf(appointment)}
           onConfirm={onConfirm}
+          onAddParallel={
+            locked ? null : (parallelStart) => onCreate(parallelStart, true)
+          }
         />
       ))}
 
@@ -1413,6 +1420,7 @@ function AppointmentBlock({
   onDragEnd,
   color,
   onConfirm,
+  onAddParallel,
 }: {
   appointment: DayAppointment;
   rangeStart: number;
@@ -1430,6 +1438,11 @@ function AppointmentBlock({
   /** Энэ захиалгын өнгө — өдрийн дараалалаар DayGrid оноодог */
   color: string;
   onConfirm: (appointment: DayAppointment) => void;
+  /**
+   * ДАВХАР ЗАХИАЛГА нэмэх — энэ захиалгын цаг дээр ХАЖУУД нь нэг захиалга.
+   * Бичих эрхгүй эсвэл амралттай багана дээр `null`.
+   */
+  onAddParallel: ((startMin: number) => void) | null;
 }) {
   const startMin = toLocalMinutes(appointment.startAt);
   const endLocal = toLocalMinutes(appointment.endAt);
@@ -1492,13 +1505,22 @@ function AppointmentBlock({
             }
           : null;
 
-  /** Баруун дээд булангийн тэмдгүүд текстийг дарахгүйн тулд үлдээх зай. */
-  const cornerPad =
-    (moneyMark ? 1 : 0) + (showCheck ? 1 : 0) === 2
-      ? "pr-10"
-      : moneyMark || showCheck
-        ? "pr-6"
-        : "";
+  /**
+   * ДАВХАР ЗАХИАЛГА нэмэх товч — мастер завгүй байхад орж ирсэн үйлчлүүлэгчийг
+   * ЯГ энэ цаг дээр нь бүртгэнэ. Цуцалсан захиалганд утгагүй: тэр цаг сул тул
+   * хоосон нүд дээр нь энгийнээр дарна.
+   */
+  const canAddParallel = Boolean(onAddParallel) && !cancelled && !noShow;
+
+  /**
+   * Баруун дээд булангийн тэмдгүүд текстийг дарахгүйн тулд үлдээх зай.
+   * «＋» нь зөвхөн өргөн дэлгэцэнд гардаг тул зай нь ч зөвхөн тэнд нэмэгдэнэ.
+   * (Ангиудыг бүтнээр нь бичив — Tailwind эх кодоос ШУУД уншдаг.)
+   */
+  const marks = (moneyMark ? 1 : 0) + (showCheck ? 1 : 0);
+  const PAD = ["", "pr-6", "pr-10"] as const;
+  const PAD_MD = ["", "md:pr-6", "md:pr-10", "md:pr-16"] as const;
+  const cornerPad = `${PAD[marks]} ${canAddParallel ? PAD_MD[marks + 1] : ""}`;
 
   /**
    * Цуцлагдсан захиалгыг чирэхгүй — сервер ч татгалзана. Эхлээд төлөвийг нь
@@ -1563,8 +1585,43 @@ function AppointmentBlock({
         Баруун ДЭЭД булан — төлбөрийн тэмдэг ба баталгаажуулах нүд.
         Нэг харцаар: төлсөн үү, баталгаажсан уу.
       */}
-      {moneyMark || showCheck ? (
+      {moneyMark || showCheck || canAddParallel ? (
         <span className="absolute right-1 top-1 flex items-center gap-1">
+          {/*
+            ДАВХАР ЗАХИАЛГА НЭМЭХ. Мастер завгүй байхад «хумсны будгаа
+            арилгуулъя» гэж орж ирсэн хүнийг энэ цаг дээр нь шууд бүртгэнэ —
+            цонх нь ижил мастер, ижил цагтай, «давхар захиалга» нь асаалттай
+            нээгдэнэ. Хуанли дээр хоёр захиалга багана дотроо хажуу хажуудаа
+            хуваагдаж харагдана.
+
+            Утсанд гарахгүй: багана 70px орчим нарийн тул гурав дахь товч
+            захиалгын нэрийг иднэ. Тэнд толгойн «Захиалга нэмэх»-ээр бүртгэнэ.
+          */}
+          {canAddParallel ? (
+            <button
+              type="button"
+              title={`${formatMinutes(startMin)} — давхар захиалга нэмэх (мастер завгүй байхад орж ирсэн үйлчлүүлэгчид)`}
+              aria-label={`${formatMinutes(startMin)} цаг дээр давхар захиалга нэмэх`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onAddParallel?.(startMin);
+              }}
+              className="hidden size-[18px] items-center justify-center rounded-md border border-sand-400 bg-white/90 text-sand-500 shadow-sm transition hover:border-brand-500 hover:bg-white hover:text-brand-700 md:flex"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className="size-3"
+                aria-hidden
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={3}
+                strokeLinecap="round"
+              >
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+            </button>
+          ) : null}
+
           {moneyMark ? (
             <span
               title={moneyMark.title}

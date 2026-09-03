@@ -257,7 +257,9 @@ export async function validateSlot(input: SlotInput): Promise<SlotIssue[]> {
   for (const conflict of conflicts) {
     issues.push({
       code: "OVERLAP",
-      message: `${staff.name} тухайн цагт завгүй: ${formatMinutes(toLocalMinutes(conflict.startAt))}–${formatMinutes(toLocalMinutes(conflict.endAt))} (${conflict.client.name}).`,
+      // Мастер зэрэг хоёр хүн хөтлөх нь бодитоор тохиолддог тул гарах замыг
+      // нь мессеж дотор шууд хэлнэ — ресепшн хаанаас хайхаа мэдэхгүй байв.
+      message: `${staff.name} тухайн цагт завгүй: ${formatMinutes(toLocalMinutes(conflict.startAt))}–${formatMinutes(toLocalMinutes(conflict.endAt))} (${conflict.client.name}). Зэрэг хөтлөх бол «Давхар захиалга»-г асаана уу.`,
     });
   }
 
