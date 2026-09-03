@@ -228,6 +228,23 @@ export function AppointmentDialog({
     editing?.allowOverlap ?? false,
   );
 
+  /**
+   * ТОГТМОЛ МАСТЕР — «зөвхөн энэ хүнд үйлчлүүлнэ» гэсэн үйлчлүүлэгч.
+   * Хуанли дээр од болж харагдаж, өөр мастер руу зөөхөөс хамгаална.
+   */
+  const [onlyThisStaff, setOnlyThisStaff] = useState(
+    editing?.onlyThisStaff ?? false,
+  );
+
+  /**
+   * Мастер нь ТҮГЖЭЭТЭЙ эсэх.
+   *
+   * Байгаа захиалга тогтмол мастертай бол хүнийг нь солих сонголт хаагдана —
+   * цаг, огноо, үйлчилгээ нь чөлөөтэй хэвээр. Солих бол эхлээд тэмдгийг авна.
+   * Шинэ захиалгад түгжихгүй: тэнд мастераа сонгож л байгаа.
+   */
+  const staffLocked = state.mode === "edit" && onlyThisStaff;
+
   /** Хэдэн ажилтан оролцож байгаа — хуваарилалтын хэсгийг харуулах эсэхэд. */
   const involvedStaffIds = [...durationByStaff.keys()];
   const subtotal = selectedServices.reduce(
@@ -782,14 +799,24 @@ export function AppointmentDialog({
               <Field
                 label="Үндсэн ажилтан"
                 hint={
-                  involvedStaffIds.length > 1
-                    ? "Нэхэмжлэх энэ ажилтны мөрөнд наалдана"
-                    : undefined
+                  staffLocked
+                    ? "Тогтмол мастер — солих бол доорх тэмдгийг эхлээд авна уу"
+                    : involvedStaffIds.length > 1
+                      ? "Нэхэмжлэх энэ ажилтны мөрөнд наалдана"
+                      : undefined
                 }
               >
+                {/*
+                  Идэвхгүй `select`-ийг хөтөч сервер рүү илгээдэггүй тул
+                  түгжээтэй үед утгыг нь нуугдмал талбараар дамжуулна.
+                */}
+                {staffLocked ? (
+                  <input type="hidden" name="staffId" value={primaryStaffId} />
+                ) : null}
                 <select
                   name="staffId"
                   value={primaryStaffId}
+                  disabled={staffLocked}
                   onChange={(event) => setPrimaryStaffId(event.target.value)}
                   className={inputClass}
                 >
@@ -811,6 +838,31 @@ export function AppointmentDialog({
                 />
               </Field>
             </section>
+
+            {/*
+              Тогтмол мастер — зарим үйлчлүүлэгч зөвхөн нэг хүнд үйлчлүүлдэг.
+              Ресепшн энд тэмдэглэвэл хуанли дээр од болж харагдаж, тэр
+              захиалгыг өөр мастер руу санамсаргүй чирч зөөхөөс хамгаална.
+            */}
+            {onlyThisStaff ? (
+              <input type="hidden" name="onlyThisStaff" value="on" />
+            ) : null}
+            <label className="flex items-start gap-2 text-sm text-sand-700">
+              <input
+                type="checkbox"
+                checked={onlyThisStaff}
+                onChange={(event) => setOnlyThisStaff(event.target.checked)}
+                className="mt-0.5 size-4 shrink-0 rounded border-sand-400 text-brand-600 focus:ring-brand-500/30"
+              />
+              <span className="min-w-0">
+                Тогтмол мастер
+                <span className="block text-xs text-sand-500">
+                  «Зөвхөн {staff.find((m) => m.id === primaryStaffId)?.name ?? "энэ мастер"}-д
+                  үйлчлүүлнэ» гэсэн үйлчлүүлэгч. Хуанли дээр ★ болж харагдаж,
+                  өөр мастер руу чирч зөөхөөс хамгаална.
+                </span>
+              </span>
+            </label>
 
             {/*
               Үргэлжлэх хугацаа ба давхар захиалга.
@@ -995,6 +1047,7 @@ export function AppointmentDialog({
                       </span>
                       <select
                         value={staffOf(service.id)}
+                        disabled={staffLocked}
                         onChange={(event) =>
                           setServiceStaff((current) => ({
                             ...current,

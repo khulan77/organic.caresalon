@@ -75,6 +75,7 @@ export async function getDaySchedule(branchId: string, dateKey: DateKey) {
         groupId: true,
         isPrimary: true,
         allowOverlap: true,
+        onlyThisStaff: true,
         createdAt: true,
         cancelledAt: true,
         cancelReason: true,

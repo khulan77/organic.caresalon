@@ -90,6 +90,9 @@ async function readSlotForm(formData: FormData) {
   /** Давхар захиалга — завгүй цаг дээр зориуд бүртгэх. */
   const allowOverlap = formData.get("allowOverlap") === "on";
 
+  /** Тогтмол мастер — зөвхөн энэ хүнд үйлчлүүлэх захиалга. */
+  const onlyThisStaff = formData.get("onlyThisStaff") === "on";
+
   if (!branchId) issues.push("Салбар сонгогдоогүй байна.");
   if (!staffId) issues.push("Ажилтан сонгоно уу.");
   if (!isDateKey(dateKey)) issues.push("Огноо буруу байна.");
@@ -108,6 +111,7 @@ async function readSlotForm(formData: FormData) {
     startMin: hour * 60 + minute,
     durationMin,
     allowOverlap,
+    onlyThisStaff,
     note,
     serviceIds,
     serviceStaffIds: formData.getAll("serviceStaffId").map(String),
@@ -268,6 +272,7 @@ export async function createAppointment(
             note: form.note,
             groupId,
             allowOverlap: form.allowOverlap,
+            onlyThisStaff: form.onlyThisStaff,
             isPrimary: group.isPrimary,
             subtotal: group.subtotal,
             extraTotal: group.extraTotal,
@@ -340,9 +345,18 @@ export async function updateAppointment(
   const appointmentId = String(formData.get("appointmentId") ?? "");
   if (!appointmentId) return { ok: false, issues: ["Захиалга олдсонгүй."] };
 
+  const rowFields = {
+    id: true,
+    branchId: true,
+    groupId: true,
+    isPrimary: true,
+    staffId: true,
+    onlyThisStaff: true,
+  } as const;
+
   const existing = await prisma.appointment.findUnique({
     where: { id: appointmentId },
-    select: { id: true, branchId: true, groupId: true, isPrimary: true },
+    select: rowFields,
   });
   if (!existing) return { ok: false, issues: ["Захиалга олдсонгүй."] };
 
@@ -351,7 +365,7 @@ export async function updateAppointment(
     ? existing
     : ((await prisma.appointment.findFirst({
         where: { groupId: existing.groupId, isPrimary: true },
-        select: { id: true, branchId: true, groupId: true, isPrimary: true },
+        select: rowFields,
       })) ?? existing);
 
   // Бүлгийн одоогийн бүх мөр — давхцлын шалгалтад хасаж, дараа нь цэвэрлэнэ
@@ -375,6 +389,27 @@ export async function updateAppointment(
     return { ok: false, issues: [BRANCH_WRITE_DENIED] };
   }
 
+  /*
+    ТОГТМОЛ МАСТЕР — «зөвхөн энэ хүнд үйлчлүүлнэ» гэсэн захиалгын МАСТЕР нь
+    солигдохгүй. Цаг, огноо, үйлчилгээ нь чөлөөтэй өөрчлөгдөнө.
+
+    Заавал солих бол эхлээд тэмдгийг нь авна: тэмдэглэгээгүй болгосон
+    хадгалалт энэ шалгалтад орохгүй тул нэг л дараалалтай — «од авах» →
+    «мастер солих».
+  */
+  if (
+    primary.onlyThisStaff &&
+    form.onlyThisStaff &&
+    form.staffId !== primary.staffId
+  ) {
+    return {
+      ok: false,
+      issues: [
+        "Тогтмол мастертай захиалгын мастерыг солих боломжгүй. Солих бол эхлээд «Тогтмол мастер» тэмдгийг авч хадгалаад, дараа нь мастерыг нь солино уу.",
+      ],
+    };
+  }
+
   let client;
   let resolved;
   try {
@@ -391,6 +426,20 @@ export async function updateAppointment(
     return {
       ok: false,
       issues: [error instanceof Error ? error.message : "Алдаа гарлаа."],
+    };
+  }
+
+  // Тогтмол мастертай захиалгыг өөр хүнд ХУВААРИЛАХ ч боломжгүй
+  if (
+    primary.onlyThisStaff &&
+    form.onlyThisStaff &&
+    resolved.groups.some((group) => group.staffId !== primary.staffId)
+  ) {
+    return {
+      ok: false,
+      issues: [
+        "Тогтмол мастертай захиалгыг өөр ажилтанд хуваарилах боломжгүй. Солих бол эхлээд «Тогтмол мастер» тэмдгийг авна уу.",
+      ],
     };
   }
 
@@ -437,6 +486,7 @@ export async function updateAppointment(
           note: form.note,
           groupId,
           allowOverlap: form.allowOverlap,
+          onlyThisStaff: form.onlyThisStaff,
           isPrimary: true,
           subtotal: first.subtotal,
           extraTotal: first.extraTotal,
@@ -470,6 +520,7 @@ export async function updateAppointment(
             note: form.note,
             groupId,
             allowOverlap: form.allowOverlap,
+            onlyThisStaff: form.onlyThisStaff,
             isPrimary: false,
             subtotal: group.subtotal,
             extraTotal: 0,
@@ -534,11 +585,28 @@ export async function moveAppointment(input: {
       startAt: true,
       endAt: true,
       status: true,
+      onlyThisStaff: true,
+      client: { select: { name: true } },
     },
   });
   if (!appointment) return { ok: false, issues: ["Захиалга олдсонгүй."] };
   if (!canWriteBranch(user, appointment.branchId)) {
     return { ok: false, issues: [BRANCH_WRITE_DENIED] };
+  }
+
+  /*
+    ТОГТМОЛ МАСТЕР — цаг нь солигдож болно, ХҮН нь солигдохгүй. Ийм
+    үйлчлүүлэгч зөвхөн тэр мастерт үйлчлүүлдэг тул санамсаргүй чирж
+    буулгахаас сэргийлнэ. Заавал солих бол захиалгын цонхноос тэмдгийг нь
+    авна.
+  */
+  if (appointment.onlyThisStaff && input.staffId !== appointment.staffId) {
+    return {
+      ok: false,
+      issues: [
+        `${appointment.client.name} нь тогтмол мастертай захиалга — өөр мастер руу зөөх боломжгүй. Солих бол захиалгаа нээгээд «Тогтмол мастер» тэмдгийг нь авна уу.`,
+      ],
+    };
   }
 
   // Цуцлагдсан мөрийг зөөвөл идэвхтэй захиалгын цаг руу чимээгүй давхцана —

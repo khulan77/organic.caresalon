@@ -1195,8 +1195,15 @@ function StaffColumn({
     return rangeStart + (event.clientY - rect.top) / pxPerMin;
   }
 
-  // Амралттай багана ба бичих эрхгүй хэрэглэгч захиалга хүлээж авахгүй
-  const acceptsDrop = Boolean(drag) && !locked;
+  /*
+    Амралттай багана ба бичих эрхгүй хэрэглэгч захиалга хүлээж авахгүй.
+    ТОГТМОЛ МАСТЕРТАЙ захиалга нь зөвхөн ӨӨРИЙН баганадаа буудаг — цаг нь
+    солигдож болно, хүн нь солигдохгүй (сервер ч татгалзана).
+  */
+  const acceptsDrop =
+    drag !== null &&
+    !locked &&
+    !(drag.appointment.onlyThisStaff && drag.appointment.staffId !== member.id);
 
   return (
     <div
@@ -1525,7 +1532,7 @@ function AppointmentBlock({
           onOpen(appointment);
         }
       }}
-      title={`${appointment.client.name} · ${formatMinutes(startMin)}–${formatMinutes(endMin)} · ${appointment.items.map((i) => i.name).join(", ")}${grouped ? " · хамтарсан захиалга" : ""}${appointment.allowOverlap ? " · давхар захиалга" : ""}${moneyMark ? ` · ${moneyMark.title}` : ""}${draggable ? " · чирж өөр мастер эсвэл цаг руу зөөнө" : ""}`}
+      title={`${appointment.client.name} · ${formatMinutes(startMin)}–${formatMinutes(endMin)} · ${appointment.items.map((i) => i.name).join(", ")}${appointment.onlyThisStaff ? " · тогтмол мастер" : ""}${grouped ? " · хамтарсан захиалга" : ""}${appointment.allowOverlap ? " · давхар захиалга" : ""}${moneyMark ? ` · ${moneyMark.title}` : ""}${draggable ? " · чирж өөр мастер эсвэл цаг руу зөөнө" : ""}`}
       className={`group/appt absolute overflow-hidden rounded-lg pl-2 pr-1.5 text-left md:pl-3.5 md:pr-2.5 shadow-[0_1px_2px_rgba(34,32,29,0.08)] ring-1 ring-inset ring-sand-900/10 transition duration-150 hover:z-10 hover:shadow-md focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/50 ${
         draggable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
       } ${tiny || dense ? "py-0.5" : "py-2"} ${noShow ? "hatched" : ""}`}
@@ -1631,6 +1638,11 @@ function AppointmentBlock({
           >
             {formatMinutes(startMin)}
           </span>
+          {appointment.onlyThisStaff ? (
+            <span aria-hidden className="mr-0.5 text-warn-600">
+              ★
+            </span>
+          ) : null}
           {grouped ? (
             <span aria-hidden className="mr-0.5 text-sand-500">
               ⇄
@@ -1651,6 +1663,15 @@ function AppointmentBlock({
               cancelled ? "line-through" : ""
             }`}
           >
+            {appointment.onlyThisStaff ? (
+              <span
+                aria-hidden
+                title="Тогтмол мастер — зөвхөн энэ хүнд үйлчлүүлдэг"
+                className="mr-1 text-warn-600"
+              >
+                ★
+              </span>
+            ) : null}
             {grouped ? (
               <span
                 aria-hidden
