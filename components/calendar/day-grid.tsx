@@ -1655,12 +1655,28 @@ function AppointmentBlock({
             ) : null}
             {appointment.client.name}
           </p>
-          {/* Үйлчилгээний нэр — намхан блокт ч ХАСАГДАХГҮЙ, зөвхөн жижигрэнэ */}
+          {/*
+            Үйлчилгээний нэр ба МӨНГӨН ДҮН — намхан блокт ч хасагдахгүй, зөвхөн
+            жижигрэнэ. Дүн нь баруун захдаа тогтоно: нэр урт бол нэр нь
+            таслагдана, дүн нь ҮРГЭЛЖ бүтнээрээ харагдана.
+          */}
           <p
-            className={`truncate ${dense ? "" : "pr-6"} ${serviceClass}`}
+            className={`flex items-baseline gap-1.5 ${dense ? "" : "pr-6"} ${serviceClass}`}
             style={{ color }}
           >
-            {appointment.items.map((item) => item.name).join(", ")}
+            <span className="min-w-0 flex-1 truncate">
+              {appointment.items.map((item) => item.name).join(", ")}
+            </span>
+            {/*
+              Утсанд гаргахгүй: багана 70px орчим нарийсдаг тул дүн нь
+              үйлчилгээний нэрийг бүтнээр нь идчихнэ. Таблет, компьютер дээр —
+              ресепшн ажилладаг дэлгэц — бүрэн харагдана.
+            */}
+            {appointment.totalPrice > 0 ? (
+              <span className="hidden shrink-0 font-semibold tabular-nums text-sand-800 md:inline">
+                {formatPrice(appointment.totalPrice)}
+              </span>
+            ) : null}
           </p>
         </>
       )}

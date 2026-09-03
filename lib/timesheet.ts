@@ -6,10 +6,14 @@ import { addDays, todayKey, weekdayOf, type DateKey } from "@/lib/time";
 /**
  * Ажилчдын цагийн бүртгэл — Excel-ийн хүснэгт шиг «ажилтан × өдөр» тор.
  *
- * Нэг өдрийн ажилласан цагийг гурван эх сурвалжаас бодно:
+ * Нэг өдрийн ажилласан цагийг дөрвөн эх сурвалжаас бодно:
  *   1. Ажилтны долоо хоногийн ҮНДСЭН хуваарь (StaffSchedule)
- *   2. Тухайн өдрийн чөлөө / амралт (StaffTimeOff) — хасагдана
- *   3. Салбарын хаалттай өдөр (BranchClosure) — бүтэн хасагдана
+ *   2. Тухайн өдрийн ГАРААР тавьсан тэмдэглэгээ (StaffDayMark) — хуваарийг дарна
+ *   3. Тухайн өдрийн чөлөө / амралт (StaffTimeOff) — хасагдана
+ *   4. Салбарын хаалттай өдөр (BranchClosure) — бүтэн хасагдана
+ *
+ * Салонд амралтын өдөр тогтмол биш тул 2 дахь нь голлодог: ресепшн цагийн
+ * бүртгэл дээрээс шууд «ажилласан / амралт / чөлөө» гэж сольдог.
  *
  * Жишээ: 10:00–19:00 хуваарьтай ажилтан 2 цагийн чөлөө авбал 7 цаг гарна.
  * Бүтэн өдрийн чөлөө бол «Ирээгүй» гэж тэмдэглэгдэнэ.
@@ -32,6 +36,8 @@ export type TimesheetCell = {
   offMinutes: number;
   /** Чөлөө / хаалтын шалтгаан */
   note: string | null;
+  /** Гараар тэмдэглэсэн эсэх — хуваариар бодогдсоноос ялгахад */
+  marked: boolean;
 };
 
 export type TimesheetRow = {
@@ -39,6 +45,7 @@ export type TimesheetRow = {
   name: string;
   position: string | null;
   color: string;
+  branchId: string;
   branchName: string;
   cells: TimesheetCell[];
   totals: {
@@ -114,6 +121,11 @@ export async function getTimesheet(input: {
           where: { date: { gte: from, lte: to } },
           select: { date: true, startMin: true, endMin: true, reason: true },
         },
+        // Гараар тавьсан өдрийн тэмдэглэгээ — хуваарийг дарна
+        dayMarks: {
+          where: { date: { gte: from, lte: to } },
+          select: { date: true, kind: true, note: true },
+        },
       },
     }),
     prisma.branchClosure.findMany({
@@ -150,12 +162,22 @@ export async function getTimesheet(input: {
       offsByDay.set(key, list);
     }
 
+    // Гараар тавьсан тэмдэглэгээ — өдрөөр индекслэнэ
+    const markByDay = new Map(
+      member.dayMarks.map((mark) => [
+        mark.date.toISOString().slice(0, 10),
+        mark,
+      ]),
+    );
+
     const cells = days.map<TimesheetCell>((dateKey) => {
       const closureReason = closedBy.get(`${member.branchId}|${dateKey}`);
       const shift = byWeekday.get(weekdayOf(dateKey));
       const offs = offsByDay.get(dateKey) ?? [];
       const reason = offs.find((off) => off.reason)?.reason ?? null;
+      const mark = markByDay.get(dateKey);
 
+      // Салбар хаалттай өдөр — ажилтны буруу биш, тэмдэглэгээнээс ч дээгүүр
       if (closureReason !== undefined) {
         return {
           dateKey,
@@ -164,10 +186,30 @@ export async function getTimesheet(input: {
           scheduledMinutes: 0,
           offMinutes: 0,
           note: closureReason,
+          marked: false,
         };
       }
 
-      if (!shift || shift.isDayOff) {
+      // Гараар «амралт» эсвэл «чөлөө» гэсэн бол хуваарь хамаагүй
+      if (mark && mark.kind !== "WORK") {
+        return {
+          dateKey,
+          state: mark.kind === "DAY_OFF" ? "DAY_OFF" : "ABSENT",
+          minutes: 0,
+          scheduledMinutes: 0,
+          offMinutes: 0,
+          note: mark.note ?? reason,
+          marked: true,
+        };
+      }
+
+      /*
+        Ажиллах цаг. Гараар «ажилласан» гэж тэмдэглэсэн бол долоо хоногийн
+        хуваарь амралт байсан ч ажилласанд тооцно — тэр өдрийн ээлжийн цагийг
+        хуваарийн мөрөөс авна (амралтын мөр ч эхлэх/дуусах цагаа хадгалдаг).
+      */
+      const marked = mark?.kind === "WORK";
+      if (!marked && (!shift || shift.isDayOff)) {
         return {
           dateKey,
           state: "DAY_OFF",
@@ -175,22 +217,26 @@ export async function getTimesheet(input: {
           scheduledMinutes: 0,
           offMinutes: 0,
           note: null,
+          marked: false,
         };
       }
 
-      const scheduledMinutes = Math.max(0, shift.endMin - shift.startMin);
+      const startMin = shift?.startMin ?? 600;
+      const endMin = shift?.endMin ?? 1140;
+      const scheduledMinutes = Math.max(0, endMin - startMin);
 
       // Чөлөөг ээлжийн мужтай огтлолцуулж хасна
       const offMinutes = offs.reduce((sum, off) => {
-        const start = Math.max(off.startMin ?? 0, shift.startMin);
-        const end = Math.min(off.endMin ?? 24 * 60, shift.endMin);
+        const start = Math.max(off.startMin ?? 0, startMin);
+        const end = Math.min(off.endMin ?? 24 * 60, endMin);
         return sum + Math.max(0, end - start);
       }, 0);
 
       const minutes = Math.max(0, scheduledMinutes - offMinutes);
 
-      // Ирээдүйн ажлын өдөр — хараахан ажиллаагүй, зөвхөн хуваарь
-      if (dateKey > today) {
+      // Ирээдүйн ажлын өдөр — хараахан ажиллаагүй, зөвхөн хуваарь.
+      // Гараар тэмдэглэсэн бол хүнийн шийдвэр тул тэрийг барина.
+      if (dateKey > today && !marked) {
         return {
           dateKey,
           state: "FUTURE",
@@ -198,6 +244,7 @@ export async function getTimesheet(input: {
           scheduledMinutes,
           offMinutes: 0,
           note: reason,
+          marked: false,
         };
       }
 
@@ -207,7 +254,8 @@ export async function getTimesheet(input: {
         minutes,
         scheduledMinutes,
         offMinutes,
-        note: reason,
+        note: mark?.note ?? reason,
+        marked,
       };
     });
 
@@ -216,6 +264,7 @@ export async function getTimesheet(input: {
       name: member.name,
       position: member.position,
       color: member.color,
+      branchId: member.branchId,
       branchName: member.branch.name,
       cells,
       totals: {

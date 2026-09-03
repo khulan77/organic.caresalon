@@ -53,6 +53,14 @@ export default async function TimesheetPage(props: PageProps<"/timesheet">) {
 
   const rows = await getTimesheet({ monthKey, branchId });
 
+  /**
+   * Аль салбарын цагийн бүртгэлийг ЗАСАЖ болох вэ.
+   * Ресепшн харьяа салбартаа өдөр бүрийн амралт, чөлөөг өөрөө тэмдэглэнэ.
+   */
+  const writableBranchIds = branches
+    .filter((branch) => isAdmin || branch.id === user.branchId)
+    .map((branch) => branch.id);
+
   return (
     <TimesheetView
       monthKey={monthKey}
@@ -60,6 +68,7 @@ export default async function TimesheetPage(props: PageProps<"/timesheet">) {
       half={half}
       branches={branches.map((branch) => ({ id: branch.id, name: branch.name }))}
       rows={rows}
+      writableBranchIds={writableBranchIds}
     />
   );
 }

@@ -159,6 +159,7 @@ model Staff {
   branch       Branch          @relation(fields: [branchId], references: [id], onDelete: Restrict)
   schedules    StaffSchedule[]
   timeOffs     StaffTimeOff[]
+  dayMarks     StaffDayMark[]
   appointments Appointment[]
 
   @@index([branchId])
@@ -196,6 +197,38 @@ model StaffTimeOff {
 
   @@index([staffId, date])
   @@map("staff_time_offs")
+}
+
+/// Цагийн бүртгэл дээр ГАРААР тэмдэглэсэн өдрийн төлөв.
+enum DayMarkKind {
+  /// Ажилласан — долоо хоногийн хуваарь амралт гэсэн ч ажилласан бол
+  WORK
+  /// Амралт — ээлжийн амралт, цалин тооцох өдөрт ороогүй
+  DAY_OFF
+  /// Чөлөө — өвчтэй, гэр бүлийн шалтгаан г.м.
+  LEAVE
+}
+
+/// Ажилтны нэг ӨДРИЙН гараар тавьсан тэмдэглэгээ.
+///
+/// Долоо хоногийн үндсэн хуваарийг ДАРНА: салонд амралтын өдөр тогтмол биш,
+/// долоо хоног бүр өөр байдаг тул ресепшн цагийн бүртгэл дээрээсээ шууд
+/// тэмдэглэнэ. Тэмдэглэгээгүй өдөр урьдын адил хуваариараа бодогдоно.
+model StaffDayMark {
+  id        String      @id @default(cuid())
+  staffId   String
+  date      DateTime    @db.Date
+  kind      DayMarkKind
+  /// Шалтгаан — «өвчтэй», «сургалт» гэх мэт. Заавал биш.
+  note      String?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, date])
+  @@index([date])
+  @@map("staff_day_marks")
 }
 
 // ──────────────────────────── Үйлчилгээ ────────────────────────────────
