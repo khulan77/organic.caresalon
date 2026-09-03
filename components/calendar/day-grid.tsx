@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   useEffect,
   useMemo,
+  useOptimistic,
   useRef,
   useState,
   useSyncExternalStore,
@@ -15,6 +16,7 @@ import type {
   DayStaff,
   ServiceCatalog,
 } from "@/lib/queries";
+import type { AppointmentStatus } from "@/lib/generated/prisma/enums";
 import { formatMinutes, toDateKey, toLocalMinutes } from "@/lib/time";
 import { formatPrice } from "@/lib/labels";
 import { buildBookingText } from "@/lib/booking-text";
@@ -29,6 +31,7 @@ import {
   moveAppointment,
   setAppointmentStatus,
 } from "@/app/(app)/calendar/actions";
+import { deleteTimeOff } from "@/app/(app)/staff/actions";
 import { AppointmentDialog, type DialogState } from "./appointment-dialog";
 
 /**
@@ -244,6 +247,25 @@ export function DayGrid({
   const [isBusy, startAction] = useTransition();
 
   /**
+   * Баталгаажуулах товчны ӨӨДРӨГ төлөв.
+   *
+   * Сервер хариу ирэхийг хүлээвэл товч дарагдсан ч хэсэг зогсоод байдаг.
+   * Иймд тэмдэг нь ТЭР ДОРОО солигдоно, сервер ард нь бичнэ. Алдвал шинэ
+   * өгөгдөл ирэхэд өөрөө хуучин байдалдаа эргэнэ.
+   *
+   * Мөн хуанлийг бүхэлд нь бүдгэрүүлдэг `startAction`-ыг ЭНД хэрэглэхгүй —
+   * нэг тэмдэг тавихад бүх дэлгэц царцах ёсгүй.
+   */
+  const [, startConfirm] = useTransition();
+  const [statusPatch, patchStatus] = useOptimistic(
+    {} as Record<string, AppointmentStatus>,
+    (
+      current: Record<string, AppointmentStatus>,
+      next: { id: string; status: AppointmentStatus },
+    ) => ({ ...current, [next.id]: next.status }),
+  );
+
+  /**
    * Хуанлийн дээд талын алдааны мэдэгдэл.
    *
    * Аль өдрийнх болохыг хамт хадгална: өөр өдөр рүү шилжихэд өмнөх өдрийн
@@ -350,13 +372,19 @@ export function DayGrid({
    * Цуцлагдсаныг нууна — ресепшн тэр цагийг шууд сул гэж харна. «Ирээгүй»
    * захиалга үлдэнэ: цаг нь бодитоор зарцуулагдсан, түүх нь харагдах ёстой.
    */
-  const shownAppointments = useMemo(
-    () =>
-      showCancelled
-        ? appointments
-        : appointments.filter((a) => a.status !== "CANCELLED"),
-    [appointments, showCancelled],
-  );
+  const shownAppointments = useMemo(() => {
+    // Дөнгөж дарсан баталгаажуулалтыг сервер бичиж амжаагүй байхад нь харуулна
+    const patched = appointments.map((appointment) => {
+      const status = statusPatch[appointment.id];
+      return status && status !== appointment.status
+        ? { ...appointment, status }
+        : appointment;
+    });
+
+    return showCancelled
+      ? patched
+      : patched.filter((a) => a.status !== "CANCELLED");
+  }, [appointments, showCancelled, statusPatch]);
 
   // Тогтмол мужаас гадуур ажлын цаг эсвэл захиалга байвал хуанли сунана
   const { rangeStart, rangeEnd } = useMemo(() => {
@@ -623,11 +651,32 @@ export function DayGrid({
    */
   function toggleConfirmed(appointment: DayAppointment) {
     setNotice(null);
-    startAction(async () => {
-      const next =
-        appointment.status === "CONFIRMED" ? "BOOKED" : "CONFIRMED";
+    const next: AppointmentStatus =
+      appointment.status === "CONFIRMED" ? "BOOKED" : "CONFIRMED";
+
+    startConfirm(async () => {
+      // Бүлгийн бүх мөр хамт солигдоно — сервер тийнхүү бичдэг
+      for (const row of appointments) {
+        const sameGroup = appointment.groupId
+          ? row.groupId === appointment.groupId
+          : row.id === appointment.id;
+        if (sameGroup) patchStatus({ id: row.id, status: next });
+      }
+
       const result = await setAppointmentStatus(appointment.id, next);
       if (!result.ok) showIssues("Төлөв солиж чадсангүй.", result.issues);
+    });
+  }
+
+  /**
+   * Чөлөөг цуцлах — хуанли дээрээс шууд, ажилтны хуудас руу орохгүйгээр.
+   * Ажилтны цаг тэр дороо сул болно. Дахин авах бол цонхны «Чөлөө» таб.
+   */
+  function removeTimeOff(timeOffId: string) {
+    setNotice(null);
+    startAction(async () => {
+      const result = await deleteTimeOff(timeOffId);
+      if (!result.ok) showIssues("Чөлөөг болиулж чадсангүй.", result.issues);
     });
   }
 
@@ -905,6 +954,7 @@ export function DayGrid({
                 onDropInColumn={dropInColumn}
                 colorOf={colorOf}
                 onConfirm={toggleConfirmed}
+                onRemoveTimeOff={canWrite ? removeTimeOff : null}
                 onCreate={(startMin) => {
                   clearNewParam();
                   setDialog({
@@ -1077,6 +1127,7 @@ function StaffColumn({
   onDropInColumn,
   colorOf,
   onConfirm,
+  onRemoveTimeOff,
 }: {
   member: DayStaff;
   appointments: DayAppointment[];
@@ -1103,6 +1154,8 @@ function StaffColumn({
   onDropInColumn: (staffId: string, pointerMin: number) => void;
   colorOf: (appointment: DayAppointment) => string;
   onConfirm: (appointment: DayAppointment) => void;
+  /** Чөлөө болиулах — эрхгүй хэрэглэгчид `null` */
+  onRemoveTimeOff: ((timeOffId: string) => void) | null;
 }) {
   const schedule = member.schedules[0];
   const dayOff = !schedule || schedule.isDayOff;
@@ -1214,17 +1267,43 @@ function StaffColumn({
         Чөлөө — дарж захиалга оруулахыг ЭНД зогсооно. Захиалгын блокууд эдгээрээс
         хойш зурагдах тул тэдгээр дээр дарж нээх нь хэвээрээ.
       */}
-      {member.timeOffs.map((off, index) => {
+      {member.timeOffs.map((off) => {
         const offStart = off.startMin ?? 0;
         const offEnd = off.endMin ?? 24 * 60;
         const height = (offEnd - offStart) * pxPerMin;
         return (
           <div
-            key={index}
+            key={off.id}
             title={`Чөлөөтэй${off.reason ? ` — ${off.reason}` : ""} · энэ цагт захиалга авахгүй`}
             className="day-off-shade absolute inset-x-0 flex cursor-not-allowed items-start justify-center gap-1 overflow-hidden px-1 pt-1 text-[11px] text-sand-500"
             style={{ top: (offStart - rangeStart) * pxPerMin, height }}
           >
+            {/* Болиулах — мастер бодлоо өөрчилбөл цаг нь тэр дороо сул болно */}
+            {onRemoveTimeOff ? (
+              <button
+                type="button"
+                title="Чөлөөг болиулах — энэ цаг сул болно"
+                aria-label={`${member.name} — чөлөөг болиулах`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onRemoveTimeOff(off.id);
+                }}
+                className="absolute right-0.5 top-0.5 flex size-[18px] cursor-pointer items-center justify-center rounded-md border border-sand-300 bg-white/90 text-sand-500 shadow-sm transition hover:border-danger-200 hover:bg-danger-50 hover:text-danger-700"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  className="size-3"
+                  aria-hidden
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2.5}
+                  strokeLinecap="round"
+                >
+                  <path d="M6 6 18 18M18 6 6 18" />
+                </svg>
+              </button>
+            ) : null}
+
             <svg
               viewBox="0 0 24 24"
               className="mt-[1px] size-3 shrink-0"

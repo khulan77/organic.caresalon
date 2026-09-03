@@ -53,7 +53,7 @@ export async function getDaySchedule(branchId: string, dateKey: DateKey) {
         },
         timeOffs: {
           where: { date: dateOnly },
-          select: { startMin: true, endMin: true, reason: true },
+          select: { id: true, startMin: true, endMin: true, reason: true },
         },
       },
     }),

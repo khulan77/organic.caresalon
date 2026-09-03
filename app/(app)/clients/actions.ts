@@ -88,3 +88,43 @@ export async function updateClient(
   refresh();
   return { ok: true };
 }
+
+/**
+ * Үйлчлүүлэгчийг бүрмөсөн устгах — жагсаалтаас нэг дарж.
+ *
+ * Асуулт асуухгүй: андуурч бүртгэсэн, дугаар нь буруу гэх мэт бүртгэлийг
+ * ресепшн өдөрт хэд хэдэн удаа цэвэрлэдэг. Захиалгын ТҮҮХТЭЙ хүнийг устгавал
+ * тэр захиалгууд ба төлбөрийн бичилт нь хамт устаж, өнгөрсөн өдрийн тайлангийн
+ * орлого өөрчлөгддөг тул түүнийг зөвхөн админ хийнэ.
+ */
+export async function deleteClient(id: string): Promise<ActionResult> {
+  const user = await getActionUser();
+
+  const client = await prisma.client.findUnique({
+    where: { id },
+    select: { name: true, _count: { select: { appointments: true } } },
+  });
+  if (!client) return fail("Үйлчлүүлэгч олдсонгүй.");
+
+  if (client._count.appointments === 0) {
+    await prisma.client.delete({ where: { id } });
+    refresh();
+    return { ok: true };
+  }
+
+  if (user.role !== "ADMIN") {
+    return fail(
+      `${client.name} нь ${client._count.appointments} захиалгатай тул зөвхөн админ устгана.`,
+    );
+  }
+
+  // Захиалга устахад түүний үйлчилгээ, нэмэлт төлбөр, төлбөрийн бичилт
+  // сангийн `Cascade`-аар дагаж устана
+  await prisma.$transaction([
+    prisma.appointment.deleteMany({ where: { clientId: id } }),
+    prisma.client.delete({ where: { id } }),
+  ]);
+
+  refresh();
+  return { ok: true };
+}

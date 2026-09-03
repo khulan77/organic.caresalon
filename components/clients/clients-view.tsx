@@ -1,7 +1,17 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useState } from "react";
-import { createClient, updateClient } from "@/app/(app)/clients/actions";
+import {
+  useActionState,
+  useEffect,
+  useMemo,
+  useState,
+  useTransition,
+} from "react";
+import {
+  createClient,
+  deleteClient,
+  updateClient,
+} from "@/app/(app)/clients/actions";
 import { formatDateLong, formatPrice } from "@/lib/labels";
 import { todayKey } from "@/lib/time";
 import type { ActionResult } from "@/lib/action-result";
@@ -86,8 +96,31 @@ function sinceLabel(days: number, dateKey: string): string {
 
 type Editing = { kind: "new" } | { kind: "edit"; client: ClientRow } | null;
 
-export function ClientsView({ clients }: { clients: ClientRow[] }) {
+export function ClientsView({
+  clients,
+  isAdmin,
+}: {
+  clients: ClientRow[];
+  /** Захиалгын түүхтэй хүнийг зөвхөн админ устгана */
+  isAdmin: boolean;
+}) {
   const [editing, setEditing] = useState<Editing>(null);
+
+  /**
+   * Устгах — асуулт асуухгүй, шууд. Андуурч бүртгэсэн мөрийг хурдан цэвэрлэх
+   * нь ресепшний өдөр тутмын ажил. Сервер татгалзвал (жишээ нь захиалгын
+   * түүхтэй хүнийг ресепшн устгах гэвэл) шалтгааныг нь дээр гаргана.
+   */
+  const [error, setError] = useState<string[] | null>(null);
+  const [isRemoving, startRemove] = useTransition();
+
+  function remove(client: ClientRow) {
+    setError(null);
+    startRemove(async () => {
+      const outcome = await deleteClient(client.id);
+      if (!outcome.ok) setError(outcome.issues);
+    });
+  }
 
   const today = todayKey();
 
@@ -124,17 +157,47 @@ export function ClientsView({ clients }: { clients: ClientRow[] }) {
       />
 
       <div className="min-h-0 flex-1 overflow-auto scrollbar-slim p-4 md:p-6">
+        {error ? (
+          <div className="mb-4">
+            <Issues issues={error} />
+          </div>
+        ) : null}
+
         {clients.length === 0 ? (
           <Empty onAdd={() => setEditing({ kind: "new" })} />
         ) : (
           <ul className="divide-y divide-sand-100 overflow-hidden rounded-2xl border border-sand-200 bg-white">
             {rows.map(({ client, since }) => (
-              <li key={client.id}>
+              <li key={client.id} className="flex items-stretch">
                 <ClientLine
                   client={client}
                   since={since}
                   onEdit={() => setEditing({ kind: "edit", client })}
                 />
+                {/* Устгах — мөрийн ХАМГИЙН АРД, ил. Дарвал шууд устана. */}
+                {isAdmin || client.visits === 0 ? (
+                  <button
+                    type="button"
+                    disabled={isRemoving}
+                    onClick={() => remove(client)}
+                    title={`${client.name}-г устгах`}
+                    aria-label={`${client.name}-г устгах`}
+                    className="flex shrink-0 items-center px-3 text-sand-300 transition hover:bg-danger-50 hover:text-danger-600 disabled:opacity-40 sm:px-4"
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="size-4"
+                      aria-hidden
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={1.8}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M10 11v6M14 11v6" />
+                    </svg>
+                  </button>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -168,7 +231,7 @@ function ClientLine({
     <button
       type="button"
       onClick={onEdit}
-      className="group flex w-full items-start gap-3 px-3 py-3 text-left transition hover:bg-sand-50 sm:gap-4 sm:px-4"
+      className="group flex min-w-0 flex-1 items-start gap-3 py-3 pl-3 pr-1 text-left transition hover:bg-sand-50 sm:gap-4 sm:pl-4"
     >
       {/* Аватар — өнгө нь мөр даяар давтагдана */}
       <span

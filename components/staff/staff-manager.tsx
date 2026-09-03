@@ -306,7 +306,7 @@ function StaffCard({
                   : `${formatMinutes(off.startMin)}–${formatMinutes(off.endMin ?? 0)}`}
                 {off.reason ? ` · ${off.reason}` : ""}
               </span>
-              {isAdmin ? (
+              {canEdit ? (
                 <button
                   type="button"
                   disabled={isPending}

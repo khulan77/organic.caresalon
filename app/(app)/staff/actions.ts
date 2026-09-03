@@ -404,9 +404,22 @@ export async function addTimeOff(
   return { ok: true };
 }
 
+/**
+ * Чөлөөг цуцлах — ажилтны цаг эргээд сул болно.
+ *
+ * Ресепшн ч харьяа салбартаа буцаана: «маргааш чөлөө авъя» гэсэн мастер
+ * бодлоо өөрчлөхөд админ хүлээх шаардлагагүй.
+ */
 export async function deleteTimeOff(id: string): Promise<ActionResult> {
-  const guard = await requireAdminAction(ADMIN_ONLY);
+  const timeOff = await prisma.staffTimeOff.findUnique({
+    where: { id },
+    select: { staff: { select: { branchId: true } } },
+  });
+  if (!timeOff) return fail("Чөлөө олдсонгүй.");
+
+  const guard = await requireBranchAction(timeOff.staff.branchId);
   if (!guard.ok) return guard;
+
   await prisma.staffTimeOff.delete({ where: { id } });
   refresh();
   return { ok: true };

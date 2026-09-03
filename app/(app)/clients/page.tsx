@@ -10,7 +10,7 @@ export const metadata = { title: "Үйлчлүүлэгч" };
 const NOT_A_VISIT = ["CANCELLED", "NO_SHOW"] as const;
 
 export default async function ClientsPage() {
-  await requireUser();
+  const user = await requireUser();
 
   const clients = await prisma.client.findMany({
     orderBy: { createdAt: "desc" },
@@ -86,5 +86,5 @@ export default async function ClientsPage() {
     };
   });
 
-  return <ClientsView clients={rows} />;
+  return <ClientsView clients={rows} isAdmin={user.role === "ADMIN"} />;
 }
