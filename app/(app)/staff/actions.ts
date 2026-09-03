@@ -1,7 +1,7 @@
 "use server";
 
 import { refresh } from "next/cache";
-import { requireAdminAction } from "@/lib/auth";
+import { canWriteBranch, getActionUser, requireAdminAction } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { ACTIVE_STATUSES } from "@/lib/labels";
 import { fail, readAmount, type ActionResult } from "@/lib/action-result";
@@ -17,6 +17,29 @@ import {
 
 /** Админаас өөр хүн энэ үйлдлийг оролдвол харагдах мессеж. */
 const ADMIN_ONLY = "Ажилтны мэдээлэл өөрчлөх эрх зөвхөн админд байна.";
+
+/** Өөр салбарын ажилтныг өөрчлөх гэсэн үед. */
+const OTHER_BRANCH =
+  "Та зөвхөн харьяа салбарынхаа ажилтныг бүртгэж, өөрчилнө. Бусад салбарынхыг харах боломжтой ч өөрчлөх эрхгүй.";
+
+/**
+ * Тухайн САЛБАРЫН ажилтныг өөрчлөх эрхтэй эсэх.
+ *
+ * Админ бүх салбарт, ресепшн зөвхөн харьяа салбартаа. Ресепшн өдөр бүр
+ * ажилтнаа мэддэг тул шинэ мастер орж ирэхэд админ хүлээх шаардлагагүй.
+ */
+async function requireBranchAction(
+  branchId: string,
+): Promise<
+  | { ok: true; user: Awaited<ReturnType<typeof getActionUser>> }
+  | { ok: false; issues: string[] }
+> {
+  const user = await getActionUser();
+  if (!canWriteBranch(user, branchId)) {
+    return { ok: false, issues: [OTHER_BRANCH] };
+  }
+  return { ok: true, user };
+}
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
 const TIME = /^\d{2}:\d{2}$/;
@@ -110,9 +133,6 @@ export async function saveStaff(
   _prev: ActionResult | null,
   formData: FormData,
 ): Promise<ActionResult> {
-  const guard = await requireAdminAction(ADMIN_ONLY);
-  if (!guard.ok) return guard;
-
   const id = String(formData.get("id") ?? "") || null;
   const name = String(formData.get("name") ?? "").trim();
   const phone = String(formData.get("phone") ?? "").replace(/\D/g, "") || null;
@@ -132,7 +152,22 @@ export async function saveStaff(
   if (issues.length > 0) return { ok: false, issues };
   const shifts = schedule as ShiftInput[];
 
+  // ШИНЭ салбарт бичих эрх — ресепшн зөвхөн харьяадаа ажилтан нэмнэ
+  const guard = await requireBranchAction(branchId);
+  if (!guard.ok) return guard;
+
   if (id) {
+    const current = await prisma.staff.findUnique({
+      where: { id },
+      select: { branchId: true, name: true },
+    });
+    if (!current) return fail("Ажилтан олдсонгүй.");
+
+    // ХУУЧИН салбарт нь ч эрхтэй байх ёстой — өөр салбарын ажилтныг өөрийн
+    // салбар руу зөөх замаар хязгаарлалтыг тойрч гарахаас сэргийлнэ
+    const from = await requireBranchAction(current.branchId);
+    if (!from.ok) return from;
+
     // Хуваарь нарийсгахад байгаа захиалга гацахаас сэргийлнэ
     const conflicts = await appointmentsOutsideSchedule(id, shifts);
     if (conflicts.length > 0) {
@@ -143,11 +178,7 @@ export async function saveStaff(
     }
 
     // Салбар солиход захиалгууд хуучин салбартаа үлдэхгүйн тулд шалгана
-    const current = await prisma.staff.findUnique({
-      where: { id },
-      select: { branchId: true, name: true },
-    });
-    if (current && current.branchId !== branchId) {
+    if (current.branchId !== branchId) {
       const upcoming = await prisma.appointment.count({
         where: {
           staffId: id,
@@ -202,7 +233,13 @@ export async function toggleStaff(
   id: string,
   isActive: boolean,
 ): Promise<ActionResult> {
-  const guard = await requireAdminAction(ADMIN_ONLY);
+  const staff = await prisma.staff.findUnique({
+    where: { id },
+    select: { branchId: true },
+  });
+  if (!staff) return fail("Ажилтан олдсонгүй.");
+
+  const guard = await requireBranchAction(staff.branchId);
   if (!guard.ok) return guard;
 
   if (!isActive) {
@@ -228,24 +265,73 @@ export async function toggleStaff(
   return { ok: true };
 }
 
-/** Бүрмөсөн устгах — зөвхөн ямар ч захиалга аваагүй ажилтныг. */
-export async function deleteStaff(id: string): Promise<ActionResult> {
-  const guard = await requireAdminAction(ADMIN_ONLY);
-  if (!guard.ok) return guard;
-
+/**
+ * Ажилтныг бүрмөсөн устгах.
+ *
+ * Захиалга аваагүй ажилтан шууд устна. Захиалгатай бол `force` шаардана:
+ * тэр үед ТҮҮХ НЬ ХАМТ УСТАНА — захиалга, тэдгээрийн үйлчилгээний мөр,
+ * нэмэлт төлбөр, төлбөрийн бичилт бүгд. Өнгөрсөн өдрийн тайлангийн дүн
+ * өөрчлөгдөнө. Түүхээ хадгалах бол «Идэвхгүй» болгох нь зөв.
+ */
+export async function deleteStaff(
+  id: string,
+  force = false,
+): Promise<ActionResult> {
   const staff = await prisma.staff.findUnique({
     where: { id },
-    select: { name: true, _count: { select: { appointments: true } } },
+    select: {
+      name: true,
+      branchId: true,
+      _count: { select: { appointments: true } },
+    },
   });
   if (!staff) return fail("Ажилтан олдсонгүй.");
 
-  if (staff._count.appointments > 0) {
+  const guard = await requireBranchAction(staff.branchId);
+  if (!guard.ok) return guard;
+
+  if (staff._count.appointments === 0) {
+    await prisma.staff.delete({ where: { id } });
+    refresh();
+    return { ok: true };
+  }
+
+  if (!force) {
     return fail(
-      `${staff.name} нь ${staff._count.appointments} захиалгад бүртгэгдсэн тул устгах боломжгүй. Түүхийг хадгалахын тулд «Идэвхгүй» болгоно уу.`,
+      `${staff.name} нь ${staff._count.appointments} захиалгад бүртгэгдсэн байна. Түүхийг хадгалахын тулд «Идэвхгүй» болгох, эсвэл устгахаа баталгаажуулна уу.`,
     );
   }
 
-  await prisma.staff.delete({ where: { id } });
+  // ТҮҮХ УСТГАХ нь зөвхөн админд — тайлангийн дүн өөрчлөгддөг үйлдэл
+  if (guard.user.role !== "ADMIN") {
+    return fail(
+      `${staff.name} нь ${staff._count.appointments} захиалгатай тул зөвхөн админ устгана. Та «Идэвхгүй» болгож болно.`,
+    );
+  }
+
+  // Хамтарсан захиалгыг БҮТНЭЭР нь устгана — нэг ирэлтийн хагас мөр үлдэх нь
+  // төлбөрийн бүртгэлийг эвдэнэ (төлбөр зөвхөн үндсэн мөрөнд наалддаг).
+  const groups = await prisma.appointment.findMany({
+    where: { staffId: id, groupId: { not: null } },
+    select: { groupId: true },
+    distinct: ["groupId"],
+  });
+  const groupIds = groups
+    .map((row) => row.groupId)
+    .filter((value): value is string => Boolean(value));
+
+  await prisma.$transaction([
+    prisma.appointment.deleteMany({
+      where: {
+        OR: [
+          { staffId: id },
+          ...(groupIds.length > 0 ? [{ groupId: { in: groupIds } }] : []),
+        ],
+      },
+    }),
+    prisma.staff.delete({ where: { id } }),
+  ]);
+
   refresh();
   return { ok: true };
 }

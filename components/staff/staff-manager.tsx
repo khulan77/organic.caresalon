@@ -39,17 +39,29 @@ const PRESET_COLORS = [
 type Editing =
   | { kind: "staff"; branchId: string; member: StaffMember | null }
   | { kind: "timeOff"; member: StaffMember }
+  | { kind: "delete"; member: StaffMember }
   | null;
 
 export function StaffManager({
   branches,
   users,
-  canEdit,
+  isAdmin,
+  writableBranchIds,
 }: {
   branches: StaffAdmin;
   users: UsersAdmin;
-  canEdit: boolean;
+  /** Ресепшний хэрэглэгч, чөлөө зэрэг зөвхөн админд байх хэсгүүдэд */
+  isAdmin: boolean;
+  /** Ажилтан нэмж, засаж болох салбарууд — ресепшнд зөвхөн харьяа нь */
+  writableBranchIds: string[];
 }) {
+  /** Тухайн салбарт ажилтан нэмэх, засах эрхтэй эсэх. */
+  function canEditBranch(branchId: string): boolean {
+    return writableBranchIds.includes(branchId);
+  }
+
+  /** Шинэ ажилтан хаана нэмэх вэ — эрхтэй эхний салбар. */
+  const defaultBranchId = branches.find((b) => canEditBranch(b.id))?.id ?? "";
   const [editing, setEditing] = useState<Editing>(null);
   const [error, setError] = useState<string[] | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -73,13 +85,12 @@ export function StaffManager({
         title="Ажилтан ба хуваарь"
         subtitle={`${total} ажилтан${active !== total ? ` · ${active} идэвхтэй` : ""} · ${branches.length} салбар`}
         action={
-          canEdit ? (
+          defaultBranchId ? (
             <PrimaryButton
-              disabled={branches.length === 0}
               onClick={() =>
                 setEditing({
                   kind: "staff",
-                  branchId: branches[0]?.id ?? "",
+                  branchId: defaultBranchId,
                   member: null,
                 })
               }
@@ -107,7 +118,7 @@ export function StaffManager({
                 <span className="text-sm text-sand-500">
                   {formatMinutes(branch.openMin)}–{formatMinutes(branch.closeMin)}
                 </span>
-                {canEdit ? (
+                {canEditBranch(branch.id) ? (
                   <button
                     type="button"
                     onClick={() =>
@@ -134,7 +145,8 @@ export function StaffManager({
                     <StaffCard
                       key={member.id}
                       member={member}
-                      canEdit={canEdit}
+                      canEdit={canEditBranch(branch.id)}
+                      isAdmin={isAdmin}
                       isPending={isPending}
                       onEdit={() =>
                         setEditing({
@@ -147,11 +159,7 @@ export function StaffManager({
                       onToggle={() =>
                         run(() => toggleStaff(member.id, !member.isActive))
                       }
-                      onDelete={() => {
-                        if (confirm(`«${member.name}»-г бүрмөсөн устгах уу?`)) {
-                          run(() => deleteStaff(member.id));
-                        }
-                      }}
+                      onDelete={() => setEditing({ kind: "delete", member })}
                       onRemoveTimeOff={(id) => run(() => deleteTimeOff(id))}
                     />
                   ))}
@@ -163,14 +171,14 @@ export function StaffManager({
           <ReceptionSection
             users={users}
             branches={branches}
-            canEdit={canEdit}
+            canEdit={isAdmin}
           />
         </div>
       </div>
 
       {editing?.kind === "staff" ? (
         <StaffModal
-          branches={branches}
+          branches={branches.filter((b) => canEditBranch(b.id))}
           branchId={editing.branchId}
           member={editing.member}
           onClose={() => setEditing(null)}
@@ -183,6 +191,25 @@ export function StaffManager({
           onClose={() => setEditing(null)}
         />
       ) : null}
+
+      {editing?.kind === "delete" ? (
+        <DeleteStaffModal
+          member={editing.member}
+          isAdmin={isAdmin}
+          isPending={isPending}
+          onClose={() => setEditing(null)}
+          onDeactivate={() => {
+            const id = editing.member.id;
+            setEditing(null);
+            run(() => toggleStaff(id, false));
+          }}
+          onConfirm={() => {
+            const { id, _count } = editing.member;
+            setEditing(null);
+            run(() => deleteStaff(id, _count.appointments > 0));
+          }}
+        />
+      ) : null}
     </>
   );
 }
@@ -190,6 +217,7 @@ export function StaffManager({
 function StaffCard({
   member,
   canEdit,
+  isAdmin,
   isPending,
   onEdit,
   onTimeOff,
@@ -198,7 +226,10 @@ function StaffCard({
   onRemoveTimeOff,
 }: {
   member: StaffMember;
+  /** Энэ салбарын ажилтныг өөрчлөх эрхтэй эсэх */
   canEdit: boolean;
+  /** Чөлөө нь зөвхөн админд — хуанлийн цонхтой ижил дүрэм */
+  isAdmin: boolean;
   isPending: boolean;
   onEdit: () => void;
   onTimeOff: () => void;
@@ -275,7 +306,7 @@ function StaffCard({
                   : `${formatMinutes(off.startMin)}–${formatMinutes(off.endMin ?? 0)}`}
                 {off.reason ? ` · ${off.reason}` : ""}
               </span>
-              {canEdit ? (
+              {isAdmin ? (
                 <button
                   type="button"
                   disabled={isPending}
@@ -300,13 +331,15 @@ function StaffCard({
           >
             Засах
           </button>
-          <button
-            type="button"
-            onClick={onTimeOff}
-            className="text-sand-600 hover:text-sand-900"
-          >
-            Чөлөө
-          </button>
+          {isAdmin ? (
+            <button
+              type="button"
+              onClick={onTimeOff}
+              className="text-sand-600 hover:text-sand-900"
+            >
+              Чөлөө
+            </button>
+          ) : null}
           <button
             type="button"
             disabled={isPending}
@@ -315,23 +348,113 @@ function StaffCard({
           >
             {member.isActive ? "Идэвхгүй" : "Идэвхжүүлэх"}
           </button>
-          {member._count.appointments === 0 ? (
-            <button
-              type="button"
-              disabled={isPending}
-              onClick={onDelete}
-              className="ml-auto text-danger-600 hover:underline"
-            >
-              Устгах
-            </button>
-          ) : (
-            <span className="ml-auto text-xs text-sand-400">
+          {member._count.appointments > 0 ? (
+            <span className="ml-auto self-center text-xs text-sand-400">
               {member._count.appointments} захиалга
             </span>
-          )}
+          ) : null}
+          <button
+            type="button"
+            disabled={isPending}
+            onClick={onDelete}
+            className={`text-danger-600 hover:underline ${
+              member._count.appointments > 0 ? "" : "ml-auto"
+            }`}
+          >
+            Устгах
+          </button>
         </div>
       ) : null}
     </article>
+  );
+}
+
+/**
+ * Ажилтан устгах баталгаажуулалт.
+ *
+ * Захиалгагүй ажилтан бол энгийн асуулт. Захиалгатай бол ЮУ УСТАХЫГ нь
+ * шулуухан хэлж, «Идэвхгүй болгох» гэсэн аюулгүй гарцыг хамт санал болгоно —
+ * ихэнх тохиолдолд ажилтан гарсан ч түүх нь үлдэх ёстой.
+ */
+function DeleteStaffModal({
+  member,
+  isAdmin,
+  isPending,
+  onClose,
+  onDeactivate,
+  onConfirm,
+}: {
+  member: StaffMember;
+  /** Түүхтэй ажилтныг устгах нь зөвхөн админд — тайлангийн дүн өөрчлөгддөг */
+  isAdmin: boolean;
+  isPending: boolean;
+  onClose: () => void;
+  onDeactivate: () => void;
+  onConfirm: () => void;
+}) {
+  const count = member._count.appointments;
+  /** Захиалгын түүхтэй ажилтныг ресепшн устгахгүй — зөвхөн идэвхгүй болгоно. */
+  const canDelete = count === 0 || isAdmin;
+
+  return (
+    <Modal
+      title="Ажилтан устгах"
+      onClose={onClose}
+      footer={
+        <>
+          <GhostButton onClick={onClose}>Болих</GhostButton>
+          {count > 0 && member.isActive ? (
+            <GhostButton disabled={isPending} onClick={onDeactivate}>
+              Идэвхгүй болгох
+            </GhostButton>
+          ) : null}
+          {canDelete ? (
+            <button
+              type="button"
+              disabled={isPending}
+              onClick={onConfirm}
+              className="rounded-xl bg-danger-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:brightness-95 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isPending ? "Устгаж байна…" : "Бүрмөсөн устгах"}
+            </button>
+          ) : null}
+        </>
+      }
+    >
+      <p className="text-sm text-sand-700">
+        <strong className="font-medium text-sand-900">{member.name}</strong>
+        {count === 0
+          ? "-г бүрмөсөн устгах уу? Буцаах боломжгүй."
+          : canDelete
+            ? "-г бүрмөсөн устгах гэж байна."
+            : ` нь ${count} захиалгатай тул зөвхөн админ устгана.`}
+      </p>
+
+      {count > 0 && !canDelete ? (
+        <p className="mt-3 rounded-lg bg-sand-100 px-3 py-2.5 text-sm text-sand-600">
+          Та «Идэвхгүй» болгож болно — тэр ажилтан хуанлид гарахгүй, шинэ
+          захиалга ч авахгүй, харин өмнөх захиалгын түүх нь бүрэн үлдэнэ.
+        </p>
+      ) : null}
+
+      {count > 0 && canDelete ? (
+        <div className="mt-3 space-y-2 rounded-lg bg-danger-50 px-3 py-2.5 text-sm text-danger-700 ring-1 ring-danger-200">
+          <p className="font-medium">
+            {count} захиалга нь хамт устана — буцаах боломжгүй.
+          </p>
+          <ul className="list-inside list-disc space-y-0.5 text-[13px]">
+            <li>Тухайн захиалгуудын үйлчилгээ, нэмэлт төлбөр</li>
+            <li>Хүлээж авсан төлбөр, урьдчилгааны бичилтүүд</li>
+            <li>Хамтарсан захиалга бол нөгөө мастерын мөр нь ч хамт</li>
+          </ul>
+          <p className="text-[13px]">
+            Өнгөрсөн өдрүүдийн тайлангийн орлого ТҮҮНИЙ ХЭМЖЭЭГЭЭР буурна.
+            Түүхээ хадгалах бол «Идэвхгүй» болгоно уу — тэр ажилтан хуанлид
+            гарахгүй, шинэ захиалга ч авахгүй болно.
+          </p>
+        </div>
+      ) : null}
+    </Modal>
   );
 }
 
