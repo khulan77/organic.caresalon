@@ -12,22 +12,12 @@ import { Issues } from "@/components/ui/form";
 
 type BranchOption = { id: string; name: string };
 
-/** 545 → "9.1". Excel рүү хуулахад тохиромжтой аравтын бутархай. */
-function hours(minutes: number): string {
-  return (Math.round((minutes / 60) * 10) / 10).toFixed(1);
-}
-
-/** Нүдэнд багтах богино хэлбэр: 120 → "2", 90 → "1.5". */
-function shortHours(minutes: number): string {
-  return String(Math.round((minutes / 60) * 10) / 10);
-}
-
 /**
  * Нүдний тэмдэглэгээ ба өнгө.
  *
- * Бүртгэл нь ЦАГААР биш ӨДРӨӨР бодогдоно: бүтэн ажилласан өдөр = ногоон ✓.
- * Амралтын өдөр шар, чөлөө авсан өдөр улаан. Цагийн чөлөө авсан өдөр бол
- * ✓ БИШ — авсан цагаа улаан нүдэнд шууд бичнэ (жишээ нь «−2ц»).
+ * Хоёрхон утга: ажилласан (ногоон ✓) эсвэл амарсан (шар А). Цалин өдрөөр
+ * бодогддог тул илүү нарийвчлал шаардлагагүй. Ирээгүй өдөр нь утга биш —
+ * бүдэг цэг, дарж тэмдэглэхийг хүлээж байна.
  */
 const CELL_STYLE: Record<
   TimesheetCell["state"],
@@ -41,42 +31,23 @@ const CELL_STYLE: Record<
   DAY_OFF: {
     short: "А",
     className: "bg-warn-200 text-warn-700",
-    label: "Амралт",
-  },
-  ABSENT: {
-    short: "Ч",
-    className: "bg-danger-200 text-danger-700",
-    label: "Бүтэн өдрийн чөлөө",
-  },
-  CLOSED: {
-    // Салоны хаалт нь ажилтны буруу биш — саарлаар, төлөвийн өнгө эзлэхгүй
-    short: "Х",
-    className: "bg-sand-200 text-sand-500",
-    label: "Салбар хаалттай",
+    label: "Амарсан",
   },
   FUTURE: {
-    // Хуваариар ажлын өдөр боловч хараахан болоогүй — сул саарал
     short: "·",
     className: "bg-sand-50 text-sand-300",
-    label: "Ирээгүй өдөр",
+    label: "Хараахан болоогүй",
   },
 };
 
-/** Цагийн чөлөө авсан өдөр — улаанаар, авсан цаг нь дотроо. */
-const PARTIAL_CLASS = "bg-danger-50 text-danger-700 ring-1 ring-danger-200";
-
 /**
- * Нүд дээр дарахад ямар төлөв рүү шилжих вэ.
- *
- * ✓ Ажилласан → А Амралт → Ч Чөлөө → ✓ ... гэж эргэлдэнэ. Салбар хаалттай
- * өдөр эргэлдэхгүй — тэр нь ажилтны хэрэг биш.
+ * Нүд дээр дарахад ямар төлөв рүү шилжих вэ — ажилласан ↔ амарсан.
+ * Ирээгүй өдрийг эхлээд «ажилласан» гэж тэмдэглэнэ (хуваариар нь).
  */
-const NEXT_MARK: Record<TimesheetCell["state"], DayMarkKind | null> = {
+const NEXT_MARK: Record<TimesheetCell["state"], DayMarkKind> = {
   WORK: "DAY_OFF",
-  FUTURE: "DAY_OFF",
-  DAY_OFF: "LEAVE",
-  ABSENT: "WORK",
-  CLOSED: null,
+  DAY_OFF: "WORK",
+  FUTURE: "WORK",
 };
 
 /**
@@ -93,21 +64,18 @@ function inHalf(dateKey: string, half: Half): boolean {
 }
 
 type Stat = {
-  full: number;
-  partial: number;
-  absent: number;
-  /** Амарсан өдөр — цалин тооцох өдөрт ороогүй */
+  /** Ажилласан өдөр — цалин үүгээр бодогдоно */
+  worked: number;
+  /** Амарсан өдөр */
   dayOff: number;
-  /** Хуваариар ажиллах ёстой боловч хараахан болоогүй өдөр */
+  /** Хараахан болоогүй, тэмдэглэгдээгүй өдөр */
   planned: number;
 };
 
 /** Сонгосон хугацааны нүднүүдээс ажилтны дүн. */
 function statOf(cells: TimesheetCell[]): Stat {
   return {
-    full: cells.filter((c) => c.state === "WORK" && c.offMinutes === 0).length,
-    partial: cells.filter((c) => c.state === "WORK" && c.offMinutes > 0).length,
-    absent: cells.filter((c) => c.state === "ABSENT").length,
+    worked: cells.filter((c) => c.state === "WORK").length,
     dayOff: cells.filter((c) => c.state === "DAY_OFF").length,
     planned: cells.filter((c) => c.state === "FUTURE").length,
   };
@@ -172,7 +140,6 @@ export function TimesheetView({
   function cycle(row: TimesheetRow, cell: TimesheetCell) {
     if (!canEdit(row)) return;
     const kind = NEXT_MARK[cell.state];
-    if (!kind) return;
 
     setMarkError(null);
     startMark(async () => {
@@ -190,19 +157,9 @@ export function TimesheetView({
   function patched(row: TimesheetRow, cell: TimesheetCell): TimesheetCell {
     const kind = markPatch[`${row.staffId}|${cell.dateKey}`];
     if (!kind) return cell;
-    if (kind === "WORK") {
-      return {
-        ...cell,
-        state: "WORK",
-        minutes: cell.scheduledMinutes - cell.offMinutes,
-        marked: true,
-      };
-    }
     return {
       ...cell,
-      state: kind === "DAY_OFF" ? "DAY_OFF" : "ABSENT",
-      minutes: 0,
-      offMinutes: 0,
+      state: kind === "WORK" ? "WORK" : "DAY_OFF",
       marked: true,
     };
   }
@@ -248,44 +205,21 @@ export function TimesheetView({
     viewRows.map((row) => [row.staffId, statOf(row.cells)]),
   );
   const statOfRow = (staffId: string): Stat =>
-    stats.get(staffId) ?? {
-      full: 0,
-      partial: 0,
-      absent: 0,
-      dayOff: 0,
-      planned: 0,
-    };
+    stats.get(staffId) ?? { worked: 0, dayOff: 0, planned: 0 };
 
   /** Ирээгүй өдөр байвал л тайлбарт нэмнэ — өнгөрсөн сард хэрэггүй. */
   const hasFuture = viewRows.some((row) =>
     row.cells.some((cell) => cell.state === "FUTURE"),
   );
 
-  const totalFullDays = [...stats.values()].reduce((sum, s) => sum + s.full, 0);
-  const totalPartialDays = [...stats.values()].reduce(
-    (sum, s) => sum + s.partial,
-    0,
-  );
-
-  /** Ажилтан бүрийн чөлөө авсан өдрүүд — хүснэгтийн доор жагсаана. */
-  const leaveRows = viewRows
-    .map((row) => ({
-      row,
-      leaves: row.cells.filter(
-        (cell) =>
-          cell.state === "ABSENT" ||
-          (cell.state === "WORK" && cell.offMinutes > 0),
-      ),
-    }))
-    .filter((entry) => entry.leaves.length > 0);
+  const totalWorked = [...stats.values()].reduce((sum, s) => sum + s.worked, 0);
+  const totalDayOff = [...stats.values()].reduce((sum, s) => sum + s.dayOff, 0);
 
   return (
     <>
       <PageHeader
         title="Цагийн бүртгэл"
-        subtitle={`${rangeLabel} · ${totalFullDays} бүтэн өдөр${
-          totalPartialDays > 0 ? ` · ${totalPartialDays} чөлөөтэй` : ""
-        }`}
+        subtitle={`${rangeLabel} · ${totalWorked} ажилласан · ${totalDayOff} амарсан`}
         action={
           <button
             type="button"
@@ -418,11 +352,16 @@ export function TimesheetView({
         {/* ── Таблет ба компьютер: бүтэн хүснэгт ── */}
         {rows.length > 0 ? (
           <div className="scrollbar-slim hidden overflow-x-auto rounded-xl border border-sand-200 bg-white md:block">
-            <table className="w-max min-w-full border-separate border-spacing-0 text-sm">
+            {/*
+              `table-fixed` — сарын бүх өдөр дэлгэцэндээ багтана. Нэр ба нийт
+              багана тогтмол өргөнтэй, үлдсэнийг өдрүүд тэнцүү хуваана.
+              Хэт нарийн цонхонд л хэвтээ гүйнэ.
+            */}
+            <table className="w-full min-w-[900px] table-fixed border-separate border-spacing-0 text-sm">
               <thead>
                 <tr>
                   {/* Нэрийн багана хэвтээ гүйлгэхэд наалдана */}
-                  <th className="sticky left-0 z-20 border-b border-r border-sand-200 bg-sand-100/90 px-3 py-2 text-left text-xs font-medium text-sand-600 backdrop-blur">
+                  <th className="sticky left-0 z-20 w-40 border-b border-r border-sand-200 bg-sand-100/90 px-3 py-2 text-left text-xs font-medium text-sand-600 backdrop-blur lg:w-48">
                     Ажилтан
                   </th>
                   {days.map((dateKey) => {
@@ -432,18 +371,18 @@ export function TimesheetView({
                     return (
                       <th
                         key={dateKey}
-                        className={`w-11 border-b border-sand-200 px-1 py-1.5 text-center text-[11px] font-medium ${
+                        className={`border-b border-sand-200 px-0 py-1 text-center text-[11px] font-medium ${
                           weekend ? "bg-sand-100 text-sand-500" : "text-sand-600"
                         }`}
                       >
                         <span className="block tabular-nums">{day}</span>
-                        <span className="block text-[10px] font-normal text-sand-400">
+                        <span className="hidden text-[10px] font-normal text-sand-400 lg:block">
                           {WEEKDAYS_SHORT[weekday]}
                         </span>
                       </th>
                     );
                   })}
-                  <th className="sticky right-0 z-20 border-b border-l border-sand-200 bg-sand-100/90 px-3 py-2 text-right text-xs font-medium text-sand-600 backdrop-blur">
+                  <th className="sticky right-0 z-20 w-20 border-b border-l border-sand-200 bg-sand-100/90 px-2 py-2 text-right text-xs font-medium text-sand-600 backdrop-blur">
                     Нийт
                   </th>
                 </tr>
@@ -451,18 +390,29 @@ export function TimesheetView({
               <tbody>
                 {viewRows.map((row) => (
                   <tr key={row.staffId} className="hover:bg-sand-50/60">
-                    <td className="sticky left-0 z-10 border-b border-r border-sand-100 bg-white px-3 py-2">
-                      <span className="flex items-center gap-2">
+                    {/*
+                      Нэр ба салбар нь баганаасаа хальж, өдрийн нүднүүд рүү
+                      давхарладаг байсан — `truncate` нь баганынхаа өргөнд
+                      таслаж, бүтэн нэрийг hover дээр үзүүлнэ.
+                    */}
+                    <td className="sticky left-0 z-10 overflow-hidden border-b border-r border-sand-100 bg-white px-2.5 py-1.5">
+                      <span className="flex items-center gap-1.5">
                         <span
                           aria-hidden
                           className="size-2 shrink-0 rounded-full"
                           style={{ backgroundColor: row.color }}
                         />
-                        <span className="whitespace-nowrap font-medium text-sand-900">
+                        <span
+                          title={row.name}
+                          className="min-w-0 truncate text-[13px] font-medium text-sand-900"
+                        >
                           {row.name}
                         </span>
                       </span>
-                      <span className="block whitespace-nowrap pl-4 text-xs text-sand-500">
+                      <span
+                        title={`${row.branchName}${row.position ? ` · ${row.position}` : ""}`}
+                        className="block truncate pl-3.5 text-[11px] text-sand-500"
+                      >
                         {row.branchName}
                         {row.position ? ` · ${row.position}` : ""}
                       </span>
@@ -470,56 +420,38 @@ export function TimesheetView({
 
                     {row.cells.map((cell) => {
                       const style = CELL_STYLE[cell.state];
-                      const partial =
-                        cell.state === "WORK" && cell.offMinutes > 0;
-                      const editable =
-                        canEdit(row) && NEXT_MARK[cell.state] !== null;
+                      const editable = canEdit(row);
                       return (
                         <td
                           key={cell.dateKey}
-                          className="border-b border-sand-100 px-1 py-1.5 text-center"
+                          className="border-b border-sand-100 px-0 py-1 text-center"
                         >
                           <button
                             type="button"
                             disabled={!editable}
                             onClick={() => cycle(row, cell)}
                             title={describeCell(cell, editable)}
-                            className={`mx-auto flex h-7 min-w-7 items-center justify-center rounded-lg px-1 text-xs font-semibold transition ${
-                              partial
-                                ? `text-[10px] tabular-nums ${PARTIAL_CLASS}`
-                                : style.className
+                            className={`mx-auto flex h-6 w-full max-w-6 items-center justify-center rounded-md text-[11px] font-semibold transition ${
+                              style.className
                             } ${
                               editable
-                                ? "cursor-pointer hover:brightness-95 active:scale-95"
+                                ? "cursor-pointer hover:brightness-95 active:scale-90"
                                 : "cursor-default"
                             } ${cell.marked ? "ring-1 ring-sand-900/20" : ""}`}
                           >
-                            {partial
-                              ? `−${shortHours(cell.offMinutes)}ц`
-                              : style.short}
+                            {style.short}
                           </button>
                         </td>
                       );
                     })}
 
-                    <td className="sticky right-0 z-10 border-b border-l border-sand-100 bg-white px-3 py-2 text-right">
+                    <td className="sticky right-0 z-10 border-b border-l border-sand-100 bg-white px-2 py-1 text-right">
                       <span className="block whitespace-nowrap font-semibold tabular-nums text-sand-900">
-                        {statOfRow(row.staffId).full} өдөр
+                        {statOfRow(row.staffId).worked} өдөр
                       </span>
-                      {/* Чөлөөтэй өдөр байвал л нэмж бичнэ */}
-                      {leaveNote(statOfRow(row.staffId)) ? (
-                        <span className="block whitespace-nowrap text-xs text-danger-600">
-                          {leaveNote(statOfRow(row.staffId))}
-                        </span>
-                      ) : null}
                       {statOfRow(row.staffId).dayOff > 0 ? (
                         <span className="block whitespace-nowrap text-xs text-warn-600">
                           {statOfRow(row.staffId).dayOff} амралт
-                        </span>
-                      ) : null}
-                      {statOfRow(row.staffId).planned > 0 ? (
-                        <span className="block whitespace-nowrap text-xs text-sand-400">
-                          {statOfRow(row.staffId).planned} хуваарьтай
                         </span>
                       ) : null}
                     </td>
@@ -541,78 +473,16 @@ export function TimesheetView({
               <strong className="font-medium text-sand-700">
                 Нүд дээр дарж солино:
               </strong>{" "}
-              ✓ Ажилласан → А Амралт → Ч Чөлөө → ✓. Амралтын өдөр долоо хоног
-              бүр өөр байдаг тул гараар тэмдэглэсэн нь долоо хоногийн хуваарийг
-              дардаг — хүрээтэй нүд нь гараар тавьсныг заана.{" "}
+              ✓ Ажилласан ↔ А Амарсан. Амралтын өдөр долоо хоног бүр өөр байдаг
+              тул гараар тэмдэглэсэн нь долоо хоногийн хуваарийг дардаг —
+              хүрээтэй нүд нь гараар тавьсныг заана.{" "}
             </>
           ) : null}
-          «Өдөр» гэдэг нь ЦАГИЙН ЧӨЛӨӨГҮЙ бүтэн ажилласан өдөр. Цагийн чөлөө
-          авсан өдөр тусдаа тоологдож, авсан цаг нь нүдэн дээрээ бичигдэнэ.
-          Амралт, салбарын хаалттай өдөр тоонд орохгүй.
+          Цалин ӨДРӨӨР бодогддог тул нүд бүр ажилласан эсвэл амарсан хоёрын нэг
+          нь байна. Хэсэгчилсэн чөлөө (2 цаг эмнэлэг г.м.) тэр өдрийг амралт
+          болгохгүй. Салбар хаалттай өдөр амарсанд тооцогдоно.
         </p>
 
-        {/* ── Чөлөө авсан өдрүүд ── */}
-        {leaveRows.length > 0 ? (
-          <section className="mt-5">
-            <h2 className="mb-2 text-sm font-semibold text-sand-800">
-              Чөлөө авсан өдрүүд
-            </h2>
-            <ul className="divide-y divide-sand-100 overflow-hidden rounded-2xl border border-sand-200 bg-white">
-              {leaveRows.map(({ row, leaves }) => (
-                <li
-                  key={row.staffId}
-                  className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-start sm:gap-4"
-                >
-                  <span className="flex shrink-0 items-center gap-2 sm:w-44">
-                    <span
-                      aria-hidden
-                      className="size-2 shrink-0 rounded-full"
-                      style={{ backgroundColor: row.color }}
-                    />
-                    <span className="truncate font-medium text-sand-900">
-                      {row.name}
-                    </span>
-                    <span className="shrink-0 text-xs text-sand-400">
-                      {leaves.length}
-                    </span>
-                  </span>
-
-                  <span className="flex min-w-0 flex-wrap gap-1.5">
-                    {leaves.map((cell) => {
-                      const day = Number(cell.dateKey.slice(8));
-                      const full = cell.state === "ABSENT";
-                      return (
-                        <span
-                          key={cell.dateKey}
-                          className={`inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs ${
-                            full
-                              ? "bg-danger-200 text-danger-700"
-                              : "bg-danger-50 text-danger-700"
-                          }`}
-                        >
-                          <span className="font-medium tabular-nums">
-                            {month}/{day}
-                          </span>
-                          <span className="text-danger-600/80">
-                            {WEEKDAYS_SHORT[weekdayOf(cell.dateKey)]}
-                          </span>
-                          <span>
-                            {full ? "бүтэн өдөр" : `${hours(cell.offMinutes)} цаг`}
-                          </span>
-                          {cell.note ? (
-                            <span className="truncate text-danger-600/80">
-                              · {cell.note}
-                            </span>
-                          ) : null}
-                        </span>
-                      );
-                    })}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
       </div>
     </>
   );
@@ -631,8 +501,6 @@ function StaffCard({
   stat: Stat;
   onPick: ((cell: TimesheetCell) => void) | null;
 }) {
-  const note = leaveNote(stat);
-
   return (
     <details className="group overflow-hidden rounded-2xl border border-sand-200 bg-white">
       <summary className="flex cursor-pointer list-none items-center gap-3 px-3.5 py-3 [&::-webkit-details-marker]:hidden">
@@ -652,21 +520,11 @@ function StaffCard({
         </span>
         <span className="shrink-0 text-right">
           <span className="block whitespace-nowrap font-semibold tabular-nums text-sand-900">
-            {stat.full} өдөр
+            {stat.worked} өдөр
           </span>
-          {note ? (
-            <span className="block whitespace-nowrap text-[11px] text-danger-600">
-              {note}
-            </span>
-          ) : null}
           {stat.dayOff > 0 ? (
             <span className="block whitespace-nowrap text-[11px] text-warn-600">
               {stat.dayOff} амралт
-            </span>
-          ) : null}
-          {stat.planned > 0 ? (
-            <span className="block whitespace-nowrap text-[11px] text-sand-400">
-              {stat.planned} хуваарьтай
             </span>
           ) : null}
         </span>
@@ -708,8 +566,7 @@ function MonthGrid({
       ))}
       {cells.map((cell) => {
         const style = CELL_STYLE[cell.state];
-        const partial = cell.state === "WORK" && cell.offMinutes > 0;
-        const editable = Boolean(onPick) && NEXT_MARK[cell.state] !== null;
+        const editable = Boolean(onPick);
         return (
           <button
             key={cell.dateKey}
@@ -718,7 +575,7 @@ function MonthGrid({
             onClick={() => onPick?.(cell)}
             title={describeCell(cell, editable)}
             className={`flex h-9 flex-col items-center justify-center rounded-lg text-[11px] font-semibold leading-tight transition ${
-              partial ? PARTIAL_CLASS : style.className
+              style.className
             } ${editable ? "active:scale-95" : ""} ${
               cell.marked ? "ring-1 ring-sand-900/20" : ""
             }`}
@@ -726,9 +583,7 @@ function MonthGrid({
             <span className="text-[9px] font-normal tabular-nums opacity-60">
               {Number(cell.dateKey.slice(8))}
             </span>
-            <span className="tabular-nums">
-              {partial ? `−${shortHours(cell.offMinutes)}ц` : style.short}
-            </span>
+            <span className="tabular-nums">{style.short}</span>
           </button>
         );
       })}
@@ -745,8 +600,8 @@ function Legend({
   className: string;
 }) {
   const states = hasFuture
-    ? (["WORK", "DAY_OFF", "ABSENT", "CLOSED", "FUTURE"] as const)
-    : (["WORK", "DAY_OFF", "ABSENT", "CLOSED"] as const);
+    ? (["WORK", "DAY_OFF", "FUTURE"] as const)
+    : (["WORK", "DAY_OFF"] as const);
 
   return (
     <div className={`text-[11px] text-sand-500 md:text-xs ${className}`}>
@@ -761,44 +616,17 @@ function Legend({
           {CELL_STYLE[state].label}
         </span>
       ))}
-      <span className="flex items-center gap-1.5">
-        <span
-          aria-hidden
-          className={`flex h-4 shrink-0 items-center justify-center rounded px-1 text-[9px] font-semibold ${PARTIAL_CLASS}`}
-        >
-          −2ц
-        </span>
-        Цагийн чөлөө авсан
-      </span>
     </div>
   );
 }
 
-/** «1 цагийн чөлөө · 2 бүтэн чөлөө» — байхгүй бол хоосон мөр. */
-function leaveNote(stat: Stat): string {
-  return [
-    stat.partial > 0 ? `${stat.partial} цагийн чөлөө` : null,
-    stat.absent > 0 ? `${stat.absent} бүтэн чөлөө` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-}
-
 function describeCell(cell: TimesheetCell, editable = false): string {
   const style = CELL_STYLE[cell.state];
-  const hint = editable ? " · дарж солино" : "";
-  const marked = cell.marked ? " (гараар)" : "";
-
-  if (cell.state === "FUTURE") {
-    return `${cell.note ? `Ирээгүй өдөр — ${cell.note}` : "Ирээгүй өдөр"}${hint}`;
-  }
-  if (cell.state === "WORK") {
-    if (cell.offMinutes === 0) return `Ажилласан өдөр${marked}${hint}`;
-    return `Ажилласан өдөр · ${hours(cell.offMinutes)} цагийн чөлөө${
-      cell.note ? ` (${cell.note})` : ""
-    }${hint}`;
-  }
-  return `${cell.note ? `${style.label} — ${cell.note}` : style.label}${marked}${hint}`;
+  const parts = [style.label];
+  if (cell.note) parts.push(cell.note);
+  if (cell.marked) parts.push("гараар тэмдэглэсэн");
+  if (editable) parts.push("дарж солино");
+  return parts.join(" · ");
 }
 
 /** Хүснэгтийг CSV болгож татаж авна — Excel-д шууд нээгдэнэ. */
@@ -814,34 +642,24 @@ function downloadCsv(
     "Ажилтан",
     "Салбар",
     ...days.map((dateKey) => String(Number(dateKey.slice(8)))),
-    "Бүтэн өдөр",
-    "Цагийн чөлөөтэй өдөр",
-    "Бүтэн чөлөө",
+    "Ажилласан өдөр",
     "Амарсан өдөр",
-    "Цагийн чөлөө (цаг)",
   ];
 
-  // Бүтэн ажилласан өдөр = 1 (Excel дээр мөрөө шууд нийлүүлнэ),
-  // цагийн чөлөөтэй өдөр «−2ц», бусад нь үсгээр
+  // Ажилласан өдөр = 1 (Excel дээр мөрөө шууд нийлүүлнэ), амарсан = «А»,
+  // хараахан болоогүй өдөр хоосон — нийлбэрт нөлөөлөхгүй
   const body = rows.map((row) => {
-    const { full, partial, absent } = statOf(row.cells);
-    const dayOff = row.cells.filter((cell) => cell.state === "DAY_OFF").length;
-    const offMinutes = row.cells.reduce((sum, cell) => sum + cell.offMinutes, 0);
+    const stat = statOf(row.cells);
 
     return [
       row.name,
       row.branchName,
       ...row.cells.map((cell) => {
-        // Ирээгүй өдрийг Excel дээр хоосон үлдээнэ — нийлбэрт нөлөөлөхгүй
         if (cell.state === "FUTURE") return "";
-        if (cell.state !== "WORK") return CELL_STYLE[cell.state].short;
-        return cell.offMinutes > 0 ? `−${shortHours(cell.offMinutes)}ц` : "1";
+        return cell.state === "WORK" ? "1" : "А";
       }),
-      String(full),
-      String(partial),
-      String(absent),
-      String(dayOff),
-      hours(offMinutes),
+      String(stat.worked),
+      String(stat.dayOff),
     ];
   });
 

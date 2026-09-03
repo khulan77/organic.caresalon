@@ -4,37 +4,30 @@ import { prisma } from "@/lib/prisma";
 import { addDays, todayKey, weekdayOf, type DateKey } from "@/lib/time";
 
 /**
- * Ажилчдын цагийн бүртгэл — Excel-ийн хүснэгт шиг «ажилтан × өдөр» тор.
+ * Ажилчдын цагийн бүртгэл — «ажилтан × өдөр» тор.
  *
- * Нэг өдрийн ажилласан цагийг дөрвөн эх сурвалжаас бодно:
- *   1. Ажилтны долоо хоногийн ҮНДСЭН хуваарь (StaffSchedule)
- *   2. Тухайн өдрийн ГАРААР тавьсан тэмдэглэгээ (StaffDayMark) — хуваарийг дарна
- *   3. Тухайн өдрийн чөлөө / амралт (StaffTimeOff) — хасагдана
- *   4. Салбарын хаалттай өдөр (BranchClosure) — бүтэн хасагдана
+ * Өдөр бүр ХОЁРХОН утгатай: АЖИЛЛАСАН эсвэл АМАРСАН. Цалин өдрөөр бодогддог
+ * тул үүнээс илүү нарийвчлал шаардлагагүй — цагийн чөлөө авсан ч тэр өдөр
+ * ажилласанд тооцогдоно.
  *
- * Салонд амралтын өдөр тогтмол биш тул 2 дахь нь голлодог: ресепшн цагийн
- * бүртгэл дээрээс шууд «ажилласан / амралт / чөлөө» гэж сольдог.
+ * Дараалал (дээрээс нь дарна):
+ *   1. Гараар тавьсан тэмдэглэгээ (StaffDayMark) — ресепшний шийдвэр
+ *   2. Салбарын хаалттай өдөр (BranchClosure) → амарсан
+ *   3. Бүтэн өдрийн чөлөө (StaffTimeOff) → амарсан
+ *   4. Долоо хоногийн үндсэн хуваарь (StaffSchedule)
  *
- * Жишээ: 10:00–19:00 хуваарьтай ажилтан 2 цагийн чөлөө авбал 7 цаг гарна.
- * Бүтэн өдрийн чөлөө бол «Ирээгүй» гэж тэмдэглэгдэнэ.
- *
- * ӨНӨӨДРӨӨС ХОЙШХ ажлын өдөр нь зөвхөн ХУВААРЬ болохоос ажилласан баримт биш.
- * Тиймээс `FUTURE` төлөвтэй гарч, ажилласан өдөрт тоологдохгүй — эс тэгвээс
- * ирэх сарыг харахад бүх өдөр «ажилласан» гэж харагдах байсан.
+ * ӨНӨӨДРӨӨС ХОЙШХ өдөр нь `FUTURE` — хараахан болоогүй тул ажилласан өдөрт
+ * тоологдохгүй. Гараар тэмдэглэсэн бол хүний шийдвэрийг барина.
  */
 
-export type DayState = "WORK" | "DAY_OFF" | "ABSENT" | "CLOSED" | "FUTURE";
+export type DayState = "WORK" | "DAY_OFF" | "FUTURE";
 
 export type TimesheetCell = {
   dateKey: DateKey;
   state: DayState;
-  /** Бодитоор ажилласан минут */
+  /** Тухайн өдрийн ээлжийн минут — ажилласан өдөрт л утгатай */
   minutes: number;
-  /** Хуваарийн минут — чөлөө хасахын өмнөх */
-  scheduledMinutes: number;
-  /** Чөлөөгөөр хасагдсан минут */
-  offMinutes: number;
-  /** Чөлөө / хаалтын шалтгаан */
+  /** Амралт / хаалтын шалтгаан */
   note: string | null;
   /** Гараар тэмдэглэсэн эсэх — хуваариар бодогдсоноос ялгахад */
   marked: boolean;
@@ -50,14 +43,10 @@ export type TimesheetRow = {
   cells: TimesheetCell[];
   totals: {
     minutes: number;
-    /** Ядаж нэг цаг ажилласан өдрийн тоо */
+    /** Ажилласан өдрийн тоо */
     workedDays: number;
-    /** Долоо хоногийн хуваариар амарсан өдөр */
+    /** Амарсан өдрийн тоо */
     dayOffDays: number;
-    /** Бүтэн өдөр ирээгүй (чөлөө/өвчтэй) */
-    absentDays: number;
-    /** Хэсэгчилсэн чөлөөгөөр хасагдсан нийт минут */
-    offMinutes: number;
   };
 };
 
@@ -171,91 +160,83 @@ export async function getTimesheet(input: {
     );
 
     const cells = days.map<TimesheetCell>((dateKey) => {
-      const closureReason = closedBy.get(`${member.branchId}|${dateKey}`);
-      const shift = byWeekday.get(weekdayOf(dateKey));
-      const offs = offsByDay.get(dateKey) ?? [];
-      const reason = offs.find((off) => off.reason)?.reason ?? null;
       const mark = markByDay.get(dateKey);
+      const shift = byWeekday.get(weekdayOf(dateKey));
+      const startMin = shift?.startMin ?? 600;
+      const endMin = shift?.endMin ?? 1140;
+      const minutes = Math.max(0, endMin - startMin);
 
-      // Салбар хаалттай өдөр — ажилтны буруу биш, тэмдэглэгээнээс ч дээгүүр
-      if (closureReason !== undefined) {
+      // 1. Гараар тавьсан нь бүхнээс дээгүүр — ресепшний шийдвэр
+      if (mark) {
+        const worked = mark.kind === "WORK";
         return {
           dateKey,
-          state: "CLOSED",
-          minutes: 0,
-          scheduledMinutes: 0,
-          offMinutes: 0,
-          note: closureReason,
-          marked: false,
-        };
-      }
-
-      // Гараар «амралт» эсвэл «чөлөө» гэсэн бол хуваарь хамаагүй
-      if (mark && mark.kind !== "WORK") {
-        return {
-          dateKey,
-          state: mark.kind === "DAY_OFF" ? "DAY_OFF" : "ABSENT",
-          minutes: 0,
-          scheduledMinutes: 0,
-          offMinutes: 0,
-          note: mark.note ?? reason,
+          state: worked ? "WORK" : "DAY_OFF",
+          minutes: worked ? minutes : 0,
+          note: mark.note,
           marked: true,
         };
       }
 
-      /*
-        Ажиллах цаг. Гараар «ажилласан» гэж тэмдэглэсэн бол долоо хоногийн
-        хуваарь амралт байсан ч ажилласанд тооцно — тэр өдрийн ээлжийн цагийг
-        хуваарийн мөрөөс авна (амралтын мөр ч эхлэх/дуусах цагаа хадгалдаг).
-      */
-      const marked = mark?.kind === "WORK";
-      if (!marked && (!shift || shift.isDayOff)) {
+      // 2. Салбар хаалттай өдөр — амарсанд тооцно
+      const closureReason = closedBy.get(`${member.branchId}|${dateKey}`);
+      if (closureReason !== undefined) {
         return {
           dateKey,
           state: "DAY_OFF",
           minutes: 0,
-          scheduledMinutes: 0,
-          offMinutes: 0,
+          note: closureReason ?? "Салбар хаалттай",
+          marked: false,
+        };
+      }
+
+      // 3. Долоо хоногийн хуваарийн амралт
+      if (!shift || shift.isDayOff) {
+        return {
+          dateKey,
+          state: "DAY_OFF",
+          minutes: 0,
           note: null,
           marked: false,
         };
       }
 
-      const startMin = shift?.startMin ?? 600;
-      const endMin = shift?.endMin ?? 1140;
-      const scheduledMinutes = Math.max(0, endMin - startMin);
+      /*
+        4. Бүтэн өдрийн чөлөө — амарсанд тооцно. ХЭСЭГЧИЛСЭН чөлөө (2 цаг
+        эмнэлэг г.м.) тооцоонд ОРОХГҮЙ: тэр өдөр ажилласан хэвээр.
+      */
+      const offs = offsByDay.get(dateKey) ?? [];
+      const wholeDayOff = offs.find(
+        (off) =>
+          (off.startMin ?? 0) <= startMin && (off.endMin ?? 24 * 60) >= endMin,
+      );
+      if (wholeDayOff) {
+        return {
+          dateKey,
+          state: "DAY_OFF",
+          minutes: 0,
+          note: wholeDayOff.reason,
+          marked: false,
+        };
+      }
 
-      // Чөлөөг ээлжийн мужтай огтлолцуулж хасна
-      const offMinutes = offs.reduce((sum, off) => {
-        const start = Math.max(off.startMin ?? 0, startMin);
-        const end = Math.min(off.endMin ?? 24 * 60, endMin);
-        return sum + Math.max(0, end - start);
-      }, 0);
-
-      const minutes = Math.max(0, scheduledMinutes - offMinutes);
-
-      // Ирээдүйн ажлын өдөр — хараахан ажиллаагүй, зөвхөн хуваарь.
-      // Гараар тэмдэглэсэн бол хүнийн шийдвэр тул тэрийг барина.
-      if (dateKey > today && !marked) {
+      // 5. Ирээдүйн ажлын өдөр — хараахан ажиллаагүй, зөвхөн хуваарь
+      if (dateKey > today) {
         return {
           dateKey,
           state: "FUTURE",
           minutes: 0,
-          scheduledMinutes,
-          offMinutes: 0,
-          note: reason,
+          note: null,
           marked: false,
         };
       }
 
       return {
         dateKey,
-        state: minutes === 0 ? "ABSENT" : "WORK",
+        state: "WORK",
         minutes,
-        scheduledMinutes,
-        offMinutes,
-        note: mark?.note ?? reason,
-        marked,
+        note: offs.find((off) => off.reason)?.reason ?? null,
+        marked: false,
       };
     });
 
@@ -271,11 +252,6 @@ export async function getTimesheet(input: {
         minutes: cells.reduce((sum, cell) => sum + cell.minutes, 0),
         workedDays: cells.filter((cell) => cell.state === "WORK").length,
         dayOffDays: cells.filter((cell) => cell.state === "DAY_OFF").length,
-        absentDays: cells.filter((cell) => cell.state === "ABSENT").length,
-        offMinutes: cells.reduce(
-          (sum, cell) => sum + (cell.state === "WORK" ? cell.offMinutes : 0),
-          0,
-        ),
       },
     };
   });

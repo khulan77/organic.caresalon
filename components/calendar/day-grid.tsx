@@ -48,6 +48,8 @@ const PX_PER_MIN_MIN = 0.95; // 1 цаг ≈ 57px — үүнээс нягт бо
 const PX_PER_MIN_MAX = 1.9; // том дэлгэцэнд ч хэт сунгахгүй
 /** Хуанлийн их бие дээрх зай (`pt-2.5`) ба доод захын амьсгал. */
 const GRID_PADDING = 14;
+/** Их биеийн дээд зай (`pt-2.5`) — үнэмлэхүй байрлалд тооцох ёстой. */
+const GRID_TOP_PAD = 10;
 
 const WIDE_QUERY = "(min-width: 768px)";
 
@@ -905,7 +907,7 @@ export function DayGrid({
 
           {/* ── Хуанлийн их бие ── */}
           {/* Дээд талын зай — эхний цагийн шошго таслагдахаас сэргийлнэ */}
-          <div className="flex pt-2.5">
+          <div className="relative flex pt-2.5">
             <div
               className={`relative ${GUTTER}`}
               style={{ height: gridHeight }}
@@ -980,14 +982,19 @@ export function DayGrid({
                 }}
               />
             ))}
-          </div>
 
-          <CurrentTimeLine
-            nowMin={nowMin}
-            rangeStart={rangeStart}
-            rangeEnd={rangeEnd}
-            pxPerMin={pxPerMin}
-          />
+            {/*
+              Одоогийн цагийн шугам нь ИХ БИЕИЙН дотор байрлана — гадна нь
+              байрлуулбал наалдамхай толгойн өндрөөр доошоо биш ДЭЭШЭЭ
+              шилжиж, бодит цагаас зөрдөг байв.
+            */}
+            <CurrentTimeLine
+              nowMin={nowMin}
+              rangeStart={rangeStart}
+              rangeEnd={rangeEnd}
+              pxPerMin={pxPerMin}
+            />
+          </div>
         </div>
       </div>
 
@@ -1708,8 +1715,16 @@ let cachedMinuteKey = "";
 let cachedNow: Date | null = null;
 
 function subscribeToClock(onChange: () => void) {
-  const timer = setInterval(onChange, 30_000);
-  return () => clearInterval(timer);
+  const timer = setInterval(onChange, 10_000);
+  // Таб руу буцаж ирэхэд шууд шинэчилнэ — унтуулсан хөтөч завсарлага алгасдаг
+  const onWake = () => onChange();
+  document.addEventListener("visibilitychange", onWake);
+  window.addEventListener("focus", onWake);
+  return () => {
+    clearInterval(timer);
+    document.removeEventListener("visibilitychange", onWake);
+    window.removeEventListener("focus", onWake);
+  };
 }
 
 function getClockSnapshot(): Date | null {
@@ -1727,7 +1742,12 @@ function getServerClockSnapshot(): Date | null {
   return null;
 }
 
-/** Одоогийн цагийн шугам — зөвхөн өнөөдрийн харагдацад. */
+/**
+ * Одоогийн цагийн шугам — зөвхөн өнөөдрийн харагдацад.
+ *
+ * Цагийн баганад ЯГ ХЭДЭН ЦАГ болж байгааг бичнэ: ресепшн «одоо хаана явж
+ * байна» гэдгийг нэг харцаар мэднэ. Минут тутам өөрөө шилжинэ.
+ */
 function CurrentTimeLine({
   nowMin,
   rangeStart,
@@ -1741,17 +1761,22 @@ function CurrentTimeLine({
   pxPerMin: number;
 }) {
   if (nowMin === null) return null;
-
-  const minutes = nowMin;
-  if (minutes < rangeStart || minutes > rangeEnd) return null;
+  if (nowMin < rangeStart || nowMin > rangeEnd) return null;
 
   return (
     <div
-      className="pointer-events-none absolute inset-x-0 z-10 flex items-center pl-[31px] md:pl-[71px]"
-      style={{ top: (minutes - rangeStart) * pxPerMin }}
+      className="pointer-events-none absolute inset-x-0 z-10 flex items-center"
+      style={{ top: GRID_TOP_PAD + (nowMin - rangeStart) * pxPerMin }}
     >
-      <span className="size-[9px] shrink-0 rounded-full bg-rose-400" />
-      <span className="h-px flex-1 bg-rose-400" />
+      {/* Цагийн баганад — яг одоогийн цаг */}
+      <span
+        className={`flex ${GUTTER} items-center justify-end pr-0.5 md:pr-2.5`}
+      >
+        <span className="rounded bg-rose-500 px-1 py-px font-mono text-[9px] font-semibold leading-tight tabular-nums text-white shadow-sm md:px-1.5 md:text-[11px]">
+          {formatMinutes(nowMin)}
+        </span>
+      </span>
+      <span className="h-[2px] flex-1 rounded-full bg-rose-500" />
     </div>
   );
 }
