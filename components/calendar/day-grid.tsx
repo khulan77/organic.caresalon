@@ -1358,6 +1358,7 @@ function AppointmentBlock({
   const canConfirm =
     canDrag &&
     (appointment.status === "BOOKED" || appointment.status === "CONFIRMED");
+  const showCheck = !cancelled && !noShow;
 
   const width = 100 / columns;
   const height = Math.max(duration * pxPerMin - 4, 22);
@@ -1399,6 +1400,14 @@ function AppointmentBlock({
               title: `Дутуу төлсөн — үлдэгдэл ${formatPrice(money.balance)}`,
             }
           : null;
+
+  /** Баруун дээд булангийн тэмдгүүд текстийг дарахгүйн тулд үлдээх зай. */
+  const cornerPad =
+    (moneyMark ? 1 : 0) + (showCheck ? 1 : 0) === 2
+      ? "pr-10"
+      : moneyMark || showCheck
+        ? "pr-6"
+        : "";
 
   /**
    * Цуцлагдсан захиалгыг чирэхгүй — сервер ч татгалзана. Эхлээд төлөвийг нь
@@ -1459,25 +1468,76 @@ function AppointmentBlock({
         />
       ) : null}
 
-      {moneyMark ? (
-        <span
-          title={moneyMark.title}
-          className="absolute right-1.5 top-1.5 flex size-4 items-center justify-center rounded-full text-[10px] font-bold leading-none"
-          style={{
-            backgroundColor: PAYMENT_STATE_LABELS[money.state].bg,
-            color: PAYMENT_STATE_LABELS[money.state].color,
-          }}
-        >
-          {moneyMark.text}
+      {/*
+        Баруун ДЭЭД булан — төлбөрийн тэмдэг ба баталгаажуулах нүд.
+        Нэг харцаар: төлсөн үү, баталгаажсан уу.
+      */}
+      {moneyMark || showCheck ? (
+        <span className="absolute right-1 top-1 flex items-center gap-1">
+          {moneyMark ? (
+            <span
+              title={moneyMark.title}
+              className="flex size-4 items-center justify-center rounded-full text-[10px] font-bold leading-none"
+              style={{
+                backgroundColor: PAYMENT_STATE_LABELS[money.state].bg,
+                color: PAYMENT_STATE_LABELS[money.state].color,
+              }}
+            >
+              {moneyMark.text}
+            </span>
+          ) : null}
+
+          {/*
+            БАТАЛГААЖУУЛАХ — нэг дарахад. Дүүрэн бол утсаар ярьж баталсан.
+            Ирсэн/дууссан захиалга дээр дүүрэн боловч дарагдахгүй — ухраалт
+            болох тул. Ресепшн өдөрт олон удаа дардаг тул үргэлж харагдана.
+          */}
+          {showCheck ? (
+            <button
+              type="button"
+              disabled={!canConfirm}
+              title={
+                confirmed
+                  ? canConfirm
+                    ? "Баталгаажсан — буцаах бол дарна"
+                    : "Баталгаажсан"
+                  : "Баталгаажуулах"
+              }
+              aria-pressed={confirmed}
+              aria-label={`${appointment.client.name} — баталгаажуулах`}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (canConfirm) onConfirm(appointment);
+              }}
+              className={`flex size-[18px] items-center justify-center rounded-md border shadow-sm transition ${
+                confirmed
+                  ? "border-brand-600 bg-brand-600 text-white"
+                  : "border-sand-400 bg-white/90 text-transparent hover:border-brand-500 hover:text-brand-300"
+              } ${canConfirm ? "" : "cursor-default"}`}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className="size-3"
+                aria-hidden
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={3}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="m5 13 4 4L19 7" />
+              </svg>
+            </button>
+          ) : null}
         </span>
       ) : null}
 
       {tiny ? (
         /* Багтахгүй болохоор цагийн эхлэл ба нэрийг нэг мөрөнд */
         <p
-          className={`truncate text-[11px] font-semibold leading-tight text-sand-900 ${
-            moneyMark ? "pr-4" : ""
-          } ${cancelled ? "line-through" : ""}`}
+          className={`truncate text-[11px] font-semibold leading-tight text-sand-900 ${cornerPad} ${
+            cancelled ? "line-through" : ""
+          }`}
         >
           <span
             className="mr-1 font-mono text-[10px] font-normal tabular-nums"
@@ -1495,7 +1555,7 @@ function AppointmentBlock({
       ) : (
         <>
           <p
-            className={`truncate font-mono tabular-nums opacity-90 ${timeClass}`}
+            className={`truncate font-mono tabular-nums opacity-90 ${cornerPad} ${timeClass}`}
             style={{ color }}
           >
             {formatMinutes(startMin)}–{formatMinutes(endMin)}
@@ -1518,7 +1578,7 @@ function AppointmentBlock({
           </p>
           {/* Үйлчилгээний нэр — намхан блокт ч ХАСАГДАХГҮЙ, зөвхөн жижигрэнэ */}
           <p
-            className={`truncate ${dense ? "pr-6" : "pr-11"} ${serviceClass}`}
+            className={`truncate ${dense ? "" : "pr-6"} ${serviceClass}`}
             style={{ color }}
           >
             {appointment.items.map((item) => item.name).join(", ")}
@@ -1528,70 +1588,17 @@ function AppointmentBlock({
 
       {/*
         Захиалгын мэдээллийг хуулах — үйлчлүүлэгч рүү баталгаажуулалт илгээхэд.
-
-        ҮРГЭЛЖ харагдана: өмнө нь зөвхөн хулгана дээгүүр очиход, түүнчлэн зөвхөн
-        ӨНДӨР блокт гардаг байсан тул компьютер дээр өдөр дэлгэцэндээ багтахад
-        (блок намхан болно) товч огт олдохгүй, захиалгаа нээж байж хуулдаг байв.
-        Хажуугийн текстийг дарахгүйн тулд булангаас жижигхэн, бүдэгхэн —
-        дээгүүр нь очиход тодорно.
+        Үргэлж харагдана, зөвхөн бүтэн өндөртэй блокт (намханд зай алга).
       */}
-      {!tiny ? (
-        <span className="absolute bottom-0.5 right-0.5 flex items-center gap-1 md:bottom-1 md:right-1">
-          {/*
-            БАТАЛГААЖУУЛАХ — нэг дарахад. Дүүрэн бол утсаар ярьж баталсан гэсэн
-            үг. Үргэлж харагдана: ресепшн өдөрт олон удаа дардаг товч.
-          */}
-          {!cancelled && !noShow ? (
-            <button
-              type="button"
-              disabled={!canConfirm}
-              title={
-                confirmed
-                  ? canConfirm
-                    ? "Баталгаажсан — буцаах бол дарна"
-                    : "Баталгаажсан"
-                  : "Баталгаажуулах"
-              }
-              aria-pressed={confirmed}
-              aria-label={`${appointment.client.name} — баталгаажуулах`}
-              onClick={(event) => {
-                event.stopPropagation();
-                if (canConfirm) onConfirm(appointment);
-              }}
-              className={`flex size-[18px] items-center justify-center rounded-md border shadow-sm transition md:size-5 ${
-                confirmed
-                  ? "border-brand-600 bg-brand-600 text-white"
-                  : "border-sand-400 bg-white/90 text-transparent hover:border-brand-500 hover:text-brand-300"
-              } ${canConfirm ? "" : "cursor-default"}`}
-            >
-              <svg
-                viewBox="0 0 24 24"
-                className="size-3"
-                aria-hidden
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={3}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="m5 13 4 4L19 7" />
-              </svg>
-            </button>
-          ) : null}
-
-          {/*
-            Захиалгын мэдээллийг хуулах — үйлчлүүлэгч рүү баталгаажуулалт
-            илгээхэд. Намхан блокт багтахгүй тул зөвхөн бүтэн блокт.
-          */}
-          {!dense ? (
-            <CopyButton
-              compact
-              label=""
-              title="Захиалгын мэдээллийг хуулах"
-              getText={() => copyTextFor(appointment)}
-              className="flex size-[18px] items-center justify-center rounded-md border border-sand-300 bg-white/90 text-sand-500 shadow-sm transition hover:border-sand-400 hover:bg-white hover:text-sand-900 md:size-5"
-            />
-          ) : null}
+      {!tiny && !dense ? (
+        <span className="absolute bottom-0.5 right-0.5 opacity-70 transition-opacity focus-within:opacity-100 group-hover/appt:opacity-100 md:bottom-1 md:right-1">
+          <CopyButton
+            compact
+            label=""
+            title="Захиалгын мэдээллийг хуулах"
+            getText={() => copyTextFor(appointment)}
+            className="flex size-[18px] items-center justify-center rounded-md border border-sand-300 bg-white/90 text-sand-500 shadow-sm transition hover:border-sand-400 hover:bg-white hover:text-sand-900 md:size-5"
+          />
         </span>
       ) : null}
     </div>
