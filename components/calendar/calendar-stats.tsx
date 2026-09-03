@@ -34,7 +34,7 @@ export function CalendarStats({
   }
 
   return (
-    <div className="no-print flex items-center gap-x-5 border-y border-sand-200 bg-sand-50 px-4 py-2.5 md:gap-x-8 md:px-6 md:py-3">
+    <div className="no-print flex items-center gap-x-5 border-y border-sand-200 bg-sand-50 px-4 py-2.5 md:gap-x-8 md:px-6 md:py-2">
       <div className="scrollbar-slim flex min-w-0 flex-1 items-center gap-x-5 overflow-x-auto md:gap-x-8">
         {items.map((item) => (
           <p
@@ -53,7 +53,7 @@ export function CalendarStats({
             key={item.value}
             type="button"
             onClick={() => changeView(item.value)}
-            className={`whitespace-nowrap rounded-full px-2.5 py-1 text-xs transition md:px-3.5 md:text-sm ${
+            className={`whitespace-nowrap rounded-full px-2.5 py-1 text-xs transition md:px-3.5 ${
               optimisticView === item.value
                 ? "bg-white font-medium text-sand-900 shadow-sm"
                 : "text-sand-500 hover:text-sand-800"

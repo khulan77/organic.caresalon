@@ -859,31 +859,48 @@ export function DayGrid({
               return (
                 <div
                   key={member.id}
-                  className={`${COL} ${hiddenColumn(member.id)} border-l border-sand-200 px-1 py-2 text-center md:px-3 md:py-4`}
+                  className={`${COL} ${hiddenColumn(member.id)} border-l border-sand-200 px-1 py-1.5 text-center md:px-2 md:py-2`}
                 >
-                  <span
-                    aria-hidden
-                    className="mx-auto flex size-7 items-center justify-center rounded-full text-[11px] font-semibold tracking-wide text-white ring-2 ring-white md:size-11 md:text-sm"
-                    style={{ backgroundColor: member.color }}
-                  >
-                    {initialsOf(member.name)}
-                  </span>
-                  <p className="mt-1 truncate text-[11px] font-medium text-sand-900 md:mt-2 md:text-[15px]">
-                    {member.name}
-                  </p>
-                  <p
-                    className={`truncate text-[10px] md:mt-0.5 md:text-xs ${
-                      dayOff ? "text-sand-400" : "text-sand-500"
-                    }`}
-                  >
-                    {dayOff ? "Амралттай" : `${count} захиалга`}
-                  </p>
-                  {/* Тухайн өдөр энэ мастер хэдэн төгрөгийн үйлчилгээ хийсэн */}
-                  {earned > 0 ? (
-                    <p className="truncate text-[11px] font-semibold text-sand-800 md:text-sm">
-                      {formatPrice(earned)}
+                  {/*
+                    Компьютер, таблет дээр зураг ба нэр НЭГ мөрөнд — толгой
+                    намхан байх тусам хуанлийн их бие өндөр болно (масштаб нь
+                    үлдсэн өндөрт өөрөө тааруулдаг). Утсанд багана нарийн тул
+                    хуучнаараа дээр доор нь хэвээр.
+                  */}
+                  <div className="md:flex md:items-center md:justify-center md:gap-1.5">
+                    <span
+                      aria-hidden
+                      className="mx-auto flex size-7 items-center justify-center rounded-full text-[11px] font-semibold tracking-wide text-white ring-2 ring-white md:mx-0 md:size-7 md:shrink-0"
+                      style={{ backgroundColor: member.color }}
+                    >
+                      {initialsOf(member.name)}
+                    </span>
+                    <p className="mt-1 truncate text-[11px] font-medium text-sand-900 md:mt-0 md:text-[13px]">
+                      {member.name}
                     </p>
-                  ) : null}
+                  </div>
+
+                  {/*
+                    Захиалгын тоо ба өдрийн орлого. Утсанд багана нарийн тул
+                    дээр доороо, компьютер, таблет дээр нэг мөрөнд багтана.
+                  */}
+                  <div className="flex min-w-0 flex-col items-center leading-tight md:flex-row md:justify-center md:gap-1">
+                    <p
+                      className={`max-w-full truncate text-[10px] md:text-[11px] ${
+                        dayOff ? "text-sand-400" : "text-sand-500"
+                      }`}
+                    >
+                      {dayOff ? "Амралттай" : `${count} захиалга`}
+                    </p>
+                    {earned > 0 ? (
+                      <p className="max-w-full truncate text-[11px] font-semibold text-sand-800">
+                        <span aria-hidden className="hidden md:inline">
+                          ·{" "}
+                        </span>
+                        {formatPrice(earned)}
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
               );
             })}
