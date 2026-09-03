@@ -15,7 +15,6 @@ import {
   validateSlot,
   type FreeSlots,
 } from "@/lib/appointments";
-import { searchClients } from "@/lib/queries";
 import { trimOldClients } from "@/lib/clients";
 import { isDateKey, localToUtc } from "@/lib/time";
 import type { ActionResult } from "@/lib/action-result";
@@ -130,8 +129,6 @@ async function validateGroup(input: {
   staffIds: string[];
   /** Засварлаж буй бүлгийн мөрүүд — өөрсдийгөө давхцуулж үзэхгүй */
   excludeAppointmentIds?: string[];
-  /** Зөвхөн ШИНЭ захиалгад — өнгөрсөн цагийг хориглоно */
-  rejectPastTime?: boolean;
   /** Давхар захиалга — өөр захиалгатай давхцахыг зөвшөөрнө */
   allowOverlap?: boolean;
 }): Promise<string[]> {
@@ -144,7 +141,6 @@ async function validateGroup(input: {
         startMin: input.startMin,
         durationMin: input.durationMin,
         excludeAppointmentIds: input.excludeAppointmentIds,
-        rejectPastTime: input.rejectPastTime,
         allowOverlap: input.allowOverlap,
       }),
     ),
@@ -230,8 +226,6 @@ export async function createAppointment(
     startMin: form.startMin,
     durationMin: resolved.totalDuration,
     staffIds: resolved.groups.map((group) => group.staffId),
-    // Өнгөрсөн цагт ШИНЭ захиалга орохгүй
-    rejectPastTime: true,
     allowOverlap: form.allowOverlap,
   });
   if (issues.length > 0) return { ok: false, issues };
@@ -815,12 +809,6 @@ export async function deletePayment(paymentId: string): Promise<ActionResult> {
   return { ok: true };
 }
 
-/** Захиалгын цонхны үйлчлүүлэгч хайх талбарт. */
-export async function findClients(query: string) {
-  await getActionUser();
-  return searchClients(query);
-}
-
 /**
  * Захиалгын цонхны «Эхлэх цаг» хэсэгт — тухайн ажилтны СУЛ ЦАГУУД.
  *
@@ -835,7 +823,6 @@ export async function freeStartTimes(input: {
   /** Сул цагуудын хоорондын зай — өгөхгүй бол үйлчилгээний уртаар */
   stepMin?: number;
   excludeAppointmentIds?: string[];
-  rejectPastTime?: boolean;
   /** Давхар захиалга — завгүй цагийг ч санал болгоно */
   allowOverlap?: boolean;
 }): Promise<FreeSlots> {
@@ -852,7 +839,6 @@ export async function freeStartTimes(input: {
     durationMin: input.durationMin,
     stepMin: input.stepMin,
     excludeAppointmentIds: input.excludeAppointmentIds,
-    rejectPastTime: input.rejectPastTime,
     allowOverlap: input.allowOverlap,
   });
 }

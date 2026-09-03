@@ -306,23 +306,3 @@ export async function getUsersAdmin() {
 
 export type UsersAdmin = Awaited<ReturnType<typeof getUsersAdmin>>;
 export type UserRow = UsersAdmin[number];
-
-/** Үйлчлүүлэгчийг нэр эсвэл утсаар хайх (захиалга үүсгэх цонхонд). */
-export async function searchClients(query: string, limit = 8) {
-  const trimmed = query.trim();
-  if (trimmed.length < 2) return [];
-
-  const digits = trimmed.replace(/\D/g, "");
-
-  return prisma.client.findMany({
-    where: {
-      OR: [
-        { name: { contains: trimmed, mode: "insensitive" } },
-        ...(digits ? [{ phone: { contains: digits } }] : []),
-      ],
-    },
-    orderBy: { name: "asc" },
-    take: limit,
-    select: { id: true, name: true, phone: true, note: true },
-  });
-}

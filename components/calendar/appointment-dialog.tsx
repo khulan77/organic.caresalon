@@ -27,7 +27,6 @@ import {
   createAppointment,
   deleteAppointment,
   deletePayment,
-  findClients,
   freeStartTimes,
   setAppointmentStatus,
   settleAppointment,
@@ -73,13 +72,6 @@ export type DialogState =
         bookedAt: Date;
       } | null;
     };
-
-type ClientOption = {
-  id: string;
-  name: string;
-  phone: string;
-  note: string | null;
-};
 
 type Props = {
   state: DialogState;
@@ -145,10 +137,6 @@ export function AppointmentDialog({
     [catalog],
   );
 
-  const [selectedClient, setSelectedClient] = useState<ClientOption | null>(
-    editing?.client ?? null,
-  );
-  const [creatingClient, setCreatingClient] = useState(false);
 
   /**
    * Сонгосон үйлчилгээнүүд.
@@ -412,7 +400,6 @@ export function AppointmentDialog({
     siblings.map((sibling) => sibling.id).join(","),
   ].join("|");
 
-  const mode = state.mode;
   /** Хариу нь одоогийн түлхүүрийнх биш бол ачаалж байна. */
   const slots = slotData?.key === slotKey ? slotData.slots : null;
   const slotReason = slotData?.key === slotKey ? slotData.reason : null;
@@ -434,7 +421,6 @@ export function AppointmentDialog({
         stepMin: Number(step),
         allowOverlap: overlap === "1",
         excludeAppointmentIds: exclude ? exclude.split(",") : [],
-        rejectPastTime: mode === "create",
       })
         .then((outcome) => {
           if (!active) return;
@@ -458,7 +444,7 @@ export function AppointmentDialog({
       active = false;
       clearTimeout(timer);
     };
-  }, [canWrite, slotKey, mode]);
+  }, [canWrite, slotKey]);
 
   /** Сонгосон цаг саналаас гарсан эсэх — жишээ нь үйлчилгээ нэмээд урт болсон. */
   const startTaken = slots !== null && !slots.includes(startMin);
@@ -606,10 +592,6 @@ export function AppointmentDialog({
               <input type="hidden" name="serviceStaffId" value={staffOf(id)} />
             </Fragment>
           ))}
-          {selectedClient && !creatingClient ? (
-            <input type="hidden" name="clientId" value={selectedClient.id} />
-          ) : null}
-
           <fieldset
             disabled={!canWrite}
             className="min-w-0 space-y-5 px-5 py-4 disabled:opacity-90"
@@ -621,25 +603,41 @@ export function AppointmentDialog({
               </p>
             ) : null}
 
-            {/* Үйлчлүүлэгч */}
+            {/*
+              Үйлчлүүлэгч — хайлт байхгүй, шууд бичнэ.
+
+              Утсаар нь сервер өөрөө тааруулна: бүртгэлтэй дугаар бол тэр
+              хүн рүү наалдаж, нэр/тэмдэглэлийг нь шинэчилнэ, шинэ дугаар бол
+              шинээр бүртгэнэ. Иймд давхардал үүсэхгүй.
+            */}
             <section>
               <SectionTitle>Үйлчлүүлэгч</SectionTitle>
-              <ClientPicker
-                selected={selectedClient}
-                creating={creatingClient}
-                onSelect={(client) => {
-                  setSelectedClient(client);
-                  setCreatingClient(false);
-                }}
-                onStartCreate={() => {
-                  setSelectedClient(null);
-                  setCreatingClient(true);
-                }}
-                onClear={() => {
-                  setSelectedClient(null);
-                  setCreatingClient(false);
-                }}
-              />
+              <div className="space-y-2">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <input
+                    name="clientName"
+                    defaultValue={editing?.client.name ?? ""}
+                    placeholder="Нэр"
+                    required
+                    className={inputClass}
+                  />
+                  <input
+                    name="clientPhone"
+                    type="tel"
+                    inputMode="numeric"
+                    defaultValue={editing?.client.phone ?? ""}
+                    placeholder="Утас"
+                    required
+                    className={inputClass}
+                  />
+                </div>
+                <input
+                  name="clientNote"
+                  defaultValue={editing?.client.note ?? ""}
+                  placeholder="Тэмдэглэл (харшил, дуртай өнгө гэх мэт)"
+                  className={inputClass}
+                />
+              </div>
             </section>
 
             {/* Үйлчилгээ */}
@@ -1793,146 +1791,6 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 }
 
 /** Үйлчлүүлэгчийг утас/нэрээр хайх, эсвэл шинээр бүртгэх. */
-function ClientPicker({
-  selected,
-  creating,
-  onSelect,
-  onStartCreate,
-  onClear,
-}: {
-  selected: ClientOption | null;
-  creating: boolean;
-  onSelect: (client: ClientOption) => void;
-  onStartCreate: () => void;
-  onClear: () => void;
-}) {
-  const [query, setQuery] = useState("");
-  // Хариуг ямар хайлтынх болохыг нь хамт хадгална — ингэснээр хожуу ирсэн
-  // хариу шинэ хайлтын үр дүнг дарахгүй.
-  const [results, setResults] = useState<{
-    query: string;
-    items: ClientOption[];
-  }>({ query: "", items: [] });
-  const [isSearching, startSearch] = useTransition();
-
-  const trimmed = query.trim();
-
-  useEffect(() => {
-    if (trimmed.length < 2) return;
-    const timer = setTimeout(() => {
-      startSearch(async () => {
-        const found = await findClients(trimmed);
-        setResults({ query: trimmed, items: found });
-      });
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [trimmed]);
-
-  const items = results.query === trimmed ? results.items : [];
-
-  if (selected) {
-    return (
-      <div className="flex items-start justify-between gap-3 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2.5">
-        <div className="min-w-0">
-          <p className="truncate font-medium text-sand-900">{selected.name}</p>
-          <p className="truncate text-sm text-sand-600">{selected.phone}</p>
-          {selected.note ? (
-            <p className="mt-1 truncate text-xs text-warn-600">⚠ {selected.note}</p>
-          ) : null}
-        </div>
-        <button
-          type="button"
-          onClick={onClear}
-          className="shrink-0 text-sm text-brand-700 underline underline-offset-2"
-        >
-          Солих
-        </button>
-      </div>
-    );
-  }
-
-  if (creating) {
-    return (
-      <div className="space-y-2 rounded-lg border border-sand-300 p-3">
-        <div className="grid gap-2 sm:grid-cols-2">
-          <input
-            name="clientName"
-            placeholder="Нэр"
-            required
-            className={inputClass}
-          />
-          <input
-            name="clientPhone"
-            type="tel"
-            inputMode="numeric"
-            placeholder="Утас"
-            required
-            className={inputClass}
-          />
-        </div>
-        <input
-          name="clientNote"
-          placeholder="Тэмдэглэл (харшил, дуртай өнгө гэх мэт)"
-          className={inputClass}
-        />
-        <button
-          type="button"
-          onClick={onClear}
-          className="text-sm text-sand-600 underline underline-offset-2"
-        >
-          Бүртгэлтэй үйлчлүүлэгч хайх
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div>
-      <input
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        placeholder="Нэр эсвэл утсаар хайх…"
-        className={inputClass}
-      />
-
-      {trimmed.length >= 2 ? (
-        <div className="mt-1.5 overflow-hidden rounded-lg border border-sand-200">
-          {items.length === 0 && (isSearching || results.query !== trimmed) ? (
-            <p className="px-3 py-2 text-sm text-sand-500">Хайж байна…</p>
-          ) : items.length === 0 ? (
-            <p className="px-3 py-2 text-sm text-sand-500">Олдсонгүй.</p>
-          ) : (
-            <ul className="max-h-44 overflow-y-auto scrollbar-slim">
-              {items.map((client) => (
-                <li key={client.id}>
-                  <button
-                    type="button"
-                    onClick={() => onSelect(client)}
-                    className="flex w-full items-baseline justify-between gap-3 px-3 py-2 text-left text-sm transition hover:bg-sand-50"
-                  >
-                    <span className="truncate font-medium text-sand-900">
-                      {client.name}
-                    </span>
-                    <span className="shrink-0 text-sand-500">{client.phone}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      ) : null}
-
-      <button
-        type="button"
-        onClick={onStartCreate}
-        className="mt-2 text-sm text-brand-700 underline underline-offset-2"
-      >
-        + Шинэ үйлчлүүлэгч бүртгэх
-      </button>
-    </div>
-  );
-}
-
 /** Захиалгын төлөв солих ба устгах. */
 function StatusControls({
   appointment,

@@ -25,7 +25,10 @@ import {
   PAYMENT_STATE_LABELS,
   summarize,
 } from "@/lib/payments";
-import { moveAppointment } from "@/app/(app)/calendar/actions";
+import {
+  moveAppointment,
+  setAppointmentStatus,
+} from "@/app/(app)/calendar/actions";
 import { AppointmentDialog, type DialogState } from "./appointment-dialog";
 
 /**
@@ -38,7 +41,7 @@ import { AppointmentDialog, type DialogState } from "./appointment-dialog";
  */
 const PX_PER_MIN_PHONE = 1.1; // 1 цаг = 66px
 const PX_PER_MIN_WIDE = 1.6; // хэмжилт ирэхээс өмнөх түр утга
-const PX_PER_MIN_MIN = 0.55; // 1 цаг = 33px — үүнээс нягт болгохгүй
+const PX_PER_MIN_MIN = 0.95; // 1 цаг ≈ 57px — үүнээс нягт болгохгүй, оронд нь гүйлгэнэ
 const PX_PER_MIN_MAX = 1.9; // том дэлгэцэнд ч хэт сунгахгүй
 /** Хуанлийн их бие дээрх зай (`pt-2.5`) ба доод захын амьсгал. */
 const GRID_PADDING = 14;
@@ -61,20 +64,24 @@ function getServerWideSnapshot(): boolean {
 }
 /** Хуанлийн шугам ба цаг сонголтын алхам — 30 минут. */
 export const SLOT_STEP = 30;
+
+/**
+ * Хуанли ҮРГЭЛЖ харуулах цагийн муж — 08:30-аас 20:30.
+ *
+ * Салбар 10:00-д нээдэг ч өглөө эрт ирсэн үйлчлүүлэгч, оройтож дуусах ажил
+ * хоёулаа хуанлид байрлах ёстой. Ажлын цагаас гадуурх хэсэг нь саарлаар
+ * (хаалттай) харагдана — тэнд дарж захиалга оруулахгүй.
+ */
+const VIEW_START_MIN = 8 * 60 + 30;
+const VIEW_END_MIN = 20 * 60 + 30;
 /**
  * Багана ба цагийн баганын өргөн.
  *
  * Баганууд дэлгэцэндээ ҮРГЭЛЖ багтана — утас, таблет, компьютер хамаагүй
- * хуанли хойшоо гүйхгүй. Ажилтан олон бол багана нарийсах тул мастер сонгох
- * эгнээ өөрөө гарч ирнэ (`MIN_READABLE_COL`).
+ * хуанли хойшоо гүйхгүй. Бүх мастер зэрэг харагдана.
  */
 const COL = "min-w-0 flex-1";
 const GUTTER = "w-9 shrink-0 md:w-[76px]";
-/** `GUTTER`-ийн бодит өргөн — баганын өргөнийг тооцоолоход хэрэгтэй. */
-const GUTTER_PX_PHONE = 36;
-const GUTTER_PX_WIDE = 76;
-/** Багана үүнээс нарийсвал нэр, цаг нь уншигдахаа больдог. */
-const MIN_READABLE_COL = 140;
 
 type Props = {
   branch: BranchSummary;
@@ -170,15 +177,6 @@ function initialsOf(name: string): string {
   return cleaned.slice(0, 2).toUpperCase();
 }
 
-/** Утасны мастер сонгох чипний хэв маяг. */
-function chipClass(active: boolean): string {
-  return `flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition ${
-    active
-      ? "border-sand-900 bg-sand-900 text-white"
-      : "border-sand-300 text-sand-700"
-  }`;
-}
-
 export function DayGrid({
   branch,
   dateKey,
@@ -215,13 +213,10 @@ export function DayGrid({
   );
 
   /**
-   * Хуанлийн харагдах хэсгийн хэмжээ.
-   * `height` — ажилтны толгойг хассан цэвэр өндөр (масштаб тооцоход),
-   * `width` — багана хэр нарийсахыг мэдэхэд.
+   * Хуанлийн их биед үлдэх ЦЭВЭР ӨНДӨР — ажилтны толгойг хассан.
+   * Босоо масштабыг үүгээр тооцно.
    */
-  const [box, setBox] = useState<{ height: number; width: number } | null>(
-    null,
-  );
+  const [box, setBox] = useState<{ height: number } | null>(null);
 
   useEffect(() => {
     const node = scrollRef.current;
@@ -232,7 +227,6 @@ export function DayGrid({
     const observer = new ResizeObserver(() => {
       setBox({
         height: node.clientHeight - head.offsetHeight - GRID_PADDING,
-        width: node.clientWidth,
       });
     });
     observer.observe(node);
@@ -364,18 +358,19 @@ export function DayGrid({
     [appointments, showCancelled],
   );
 
-  // Ажлын цагаас гадуур захиалга байвал хуанлийг сунгана — нуугдахаас сэргийлнэ
+  // Тогтмол мужаас гадуур ажлын цаг эсвэл захиалга байвал хуанли сунана
   const { rangeStart, rangeEnd } = useMemo(() => {
-    let start = openMin;
-    let end = closeMin;
+    let start = Math.min(VIEW_START_MIN, openMin);
+    let end = Math.max(VIEW_END_MIN, closeMin);
     for (const appt of shownAppointments) {
       start = Math.min(start, toLocalMinutes(appt.startAt));
       const apptEnd = toLocalMinutes(appt.endAt);
       end = Math.max(end, apptEnd === 0 ? 24 * 60 : apptEnd);
     }
+    // 30 минутын нүд рүү тэгшилнэ — 08:30 нь 08:00 болж бүдгэрэхгүй
     return {
-      rangeStart: Math.floor(start / 60) * 60,
-      rangeEnd: Math.ceil(end / 60) * 60,
+      rangeStart: Math.floor(start / SLOT_STEP) * SLOT_STEP,
+      rangeEnd: Math.ceil(end / SLOT_STEP) * SLOT_STEP,
     };
   }, [shownAppointments, openMin, closeMin]);
 
@@ -435,36 +430,6 @@ export function DayGrid({
     for (const appt of shownAppointments) map.get(appt.staffId)?.push(appt);
     return map;
   }, [visibleStaff, shownAppointments]);
-
-  /**
-   * Багана хэр нарийсаж байна вэ — утас, таблет, жижиг цонх бүгдэд адилхан
-   * дүрэм: нэг баганад 140px-ээс бага ногдвол «шахуу» гэж үзнэ.
-   */
-  const columnWidth =
-    box && visibleStaff.length > 0
-      ? (box.width - (isWide ? GUTTER_PX_WIDE : GUTTER_PX_PHONE)) /
-        visibleStaff.length
-      : null;
-  const crowded =
-    visibleStaff.length > 1 &&
-    columnWidth !== null &&
-    columnWidth < MIN_READABLE_COL;
-
-  /**
-   * Шахуу үед НЭГ мастерын багана руу төвлөрөх.
-   *
-   * Дэлгэц/цонх томрож баганууд тухтай багтмагц сонголт өөрөө хүчингүй болно —
-   * нуугдсан багана «гацаж» үлдэхгүй.
-   */
-  const [focusStaffId, setFocusStaffId] = useState<string | null>(null);
-  const focus =
-    crowded && visibleStaff.some((member) => member.id === focusStaffId)
-      ? focusStaffId
-      : null;
-
-  function hiddenColumn(staffId: string): string {
-    return focus && focus !== staffId ? "hidden" : "";
-  }
 
   // Ажлын цаг руу автоматаар гүйлгэнэ
   useEffect(() => {
@@ -650,6 +615,23 @@ export function DayGrid({
   }
 
   /**
+   * Нэг дарж БАТАЛГААЖУУЛНА.
+   *
+   * Ресепшн үйлчлүүлэгчтэй утсаар ярьсны дараа хуанли дээрээс шууд тэмдэглэнэ
+   * — захиалга нээх шаардлагагүй. Дахин дарвал буцаад «Захиалсан» болно.
+   * Хамтарсан захиалгын бүх мөр хамт солигдоно (сервер тийнхүү бичдэг).
+   */
+  function toggleConfirmed(appointment: DayAppointment) {
+    setNotice(null);
+    startAction(async () => {
+      const next =
+        appointment.status === "CONFIRMED" ? "BOOKED" : "CONFIRMED";
+      const result = await setAppointmentStatus(appointment.id, next);
+      if (!result.ok) showIssues("Төлөв солиж чадсангүй.", result.issues);
+    });
+  }
+
+  /**
    * Захиалгын баталгаажуулалтын текст — хамтарсан захиалгын бүх мөрийг нэгтгэнэ.
    * Хуанли дээрх аль ч мөрөөс хуулахад НЭГ бүтэн мессеж гарна.
    */
@@ -730,7 +712,7 @@ export function DayGrid({
         ямар шалтгаантай нь жагсаана.
       */}
       {cancelledHistory.length > 0 ? (
-        <div className="no-print border-b border-sand-200 px-4 py-1.5 md:px-6">
+        <div className="no-print border-b border-sand-200 px-3 py-1 md:px-6 md:py-1.5">
           <button
             type="button"
             onClick={() => setShowCancelled((value) => !value)}
@@ -803,39 +785,6 @@ export function DayGrid({
         </div>
       ) : null}
 
-      {/*
-        Мастер сонгох эгнээ — баганууд шахуу болсон үед Л гарч ирнэ (утас,
-        таблет, нарийн цонх). Тухтай багтаж байвал босоо зай дэмий эзлэхгүй.
-      */}
-      {crowded ? (
-        <div className="no-print flex gap-1.5 overflow-x-auto scrollbar-slim border-b border-sand-200 px-3 py-2 md:px-6">
-          <button
-            type="button"
-            onClick={() => setFocusStaffId(null)}
-            aria-pressed={focus === null}
-            className={chipClass(focus === null)}
-          >
-            Бүгд
-          </button>
-          {visibleStaff.map((member) => (
-            <button
-              key={member.id}
-              type="button"
-              onClick={() => setFocusStaffId(member.id)}
-              aria-pressed={focus === member.id}
-              className={chipClass(focus === member.id)}
-            >
-              <span
-                aria-hidden
-                className="size-2 shrink-0 rounded-full"
-                style={{ backgroundColor: member.color }}
-              />
-              {member.name}
-            </button>
-          ))}
-        </div>
-      ) : null}
-
       <div
         aria-busy={isBusy}
         className={`min-h-0 flex-1 overflow-auto scrollbar-slim bg-white ${
@@ -859,7 +808,7 @@ export function DayGrid({
               return (
                 <div
                   key={member.id}
-                  className={`${COL} ${hiddenColumn(member.id)} border-l border-sand-200 px-1 py-1.5 text-center md:px-2 md:py-2`}
+                  className={`${COL} border-l border-sand-200 px-1 py-1 text-center md:px-2 md:py-2`}
                 >
                   {/*
                     Компьютер, таблет дээр зураг ба нэр НЭГ мөрөнд — толгой
@@ -870,7 +819,7 @@ export function DayGrid({
                   <div className="md:flex md:items-center md:justify-center md:gap-1.5">
                     <span
                       aria-hidden
-                      className="mx-auto flex size-7 items-center justify-center rounded-full text-[11px] font-semibold tracking-wide text-white ring-2 ring-white md:mx-0 md:size-7 md:shrink-0"
+                      className="mx-auto flex size-6 items-center justify-center rounded-full text-[10px] font-semibold tracking-wide text-white ring-2 ring-white md:mx-0 md:size-7 md:text-[11px] md:shrink-0"
                       style={{ backgroundColor: member.color }}
                     >
                       {initialsOf(member.name)}
@@ -892,11 +841,10 @@ export function DayGrid({
                     >
                       {dayOff ? "Амралттай" : `${count} захиалга`}
                     </p>
+                    {/* Орлого зөвхөн том дэлгэцэнд — утсанд хуанли л харагдана */}
                     {earned > 0 ? (
-                      <p className="max-w-full truncate text-[11px] font-semibold text-sand-800">
-                        <span aria-hidden className="hidden md:inline">
-                          ·{" "}
-                        </span>
+                      <p className="hidden max-w-full truncate text-[11px] font-semibold text-sand-800 md:block">
+                        <span aria-hidden>· </span>
                         {formatPrice(earned)}
                       </p>
                     ) : null}
@@ -956,7 +904,7 @@ export function DayGrid({
                 onDragOverColumn={hoverColumn}
                 onDropInColumn={dropInColumn}
                 colorOf={colorOf}
-                hiddenClass={hiddenColumn(member.id)}
+                onConfirm={toggleConfirmed}
                 onCreate={(startMin) => {
                   clearNewParam();
                   setDialog({
@@ -996,8 +944,12 @@ export function DayGrid({
       {/*
         Өдрийн нийт дүн — хуанлийн ЯГ доод талд, гүйлгэхгүйгээр үргэлж харагдана.
         «Нийт» нь захиалгын дүн, «Төлөгдсөн» нь бодитоор гарт орсон мөнгө.
+
+        ГАР УТСАНД ОГТ ГАРАХГҮЙ: жижиг дэлгэцэнд хуанли өөрөө л чухал, мөнгөний
+        мөр нь захиалгын нүднээс өндөр авдаг. Дүнг тайлангаас, эсвэл захиалга
+        бүрийн цонхноос харна.
       */}
-      <div className="flex shrink-0 flex-col border-t border-sand-200 bg-sand-50">
+      <div className="hidden shrink-0 flex-col border-t border-sand-200 bg-sand-50 md:flex">
         {/* Ажилтан тус бүрийн задаргаа — дарж нээж хаана */}
         {breakdown ? (
           <ul className="scrollbar-slim max-h-44 overflow-y-auto border-b border-sand-200 px-4 py-1.5 md:px-6">
@@ -1124,7 +1076,7 @@ function StaffColumn({
   onDragOverColumn,
   onDropInColumn,
   colorOf,
-  hiddenClass,
+  onConfirm,
 }: {
   member: DayStaff;
   appointments: DayAppointment[];
@@ -1150,8 +1102,7 @@ function StaffColumn({
   onDragOverColumn: (staffId: string, pointerMin: number) => void;
   onDropInColumn: (staffId: string, pointerMin: number) => void;
   colorOf: (appointment: DayAppointment) => string;
-  /** Мастер сонгосон үед бусад баганыг нуух ангилал */
-  hiddenClass: string;
+  onConfirm: (appointment: DayAppointment) => void;
 }) {
   const schedule = member.schedules[0];
   const dayOff = !schedule || schedule.isDayOff;
@@ -1159,23 +1110,22 @@ function StaffColumn({
   const locked = dayOff || !canWrite;
   const laidOut = useMemo(() => layoutAppointments(appointments), [appointments]);
 
-  /** Тухайн нүд бүхэлдээ өнгөрсөн үү — сервер ч ийм захиалгыг хүлээж авахгүй */
-  function isPast(startMin: number): boolean {
-    return nowMin !== null && startMin + SLOT_STEP <= nowMin;
-  }
-
   function handleClick(event: React.MouseEvent<HTMLDivElement>) {
     if (locked) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const raw = rangeStart + (event.clientY - rect.top) / pxPerMin;
     // Дарсан цагийг 30 минутын нүд рүү бөөрөнхийлнө
     const snapped = Math.floor(raw / SLOT_STEP) * SLOT_STEP;
+
+    /*
+      Хуанли ажлын цагаас өмнө, хойш ч үргэлжилдэг (08:30–20:30). Тэр саарал
+      хэсэгт дарвал захиалгыг ЭЭЛЖИНД нь оруулж өгнө — цонх нээгдээд шууд
+      «энэ цаг болохгүй» гэж хэлэхээс дээр.
+    */
     const startMin = Math.max(
-      rangeStart,
-      Math.min(snapped, rangeEnd - SLOT_STEP),
+      schedule?.startMin ?? rangeStart,
+      Math.min(snapped, (schedule?.endMin ?? rangeEnd) - SLOT_STEP),
     );
-    // Өнгөрсөн цаг руу шинэ захиалга оруулахгүй
-    if (isPast(startMin)) return;
     onCreate(startMin);
   }
 
@@ -1202,7 +1152,7 @@ function StaffColumn({
         event.preventDefault();
         onDropInColumn(member.id, pointerMinutes(event));
       }}
-      className={`relative ${COL} ${hiddenClass} border-l border-sand-200 ${
+      className={`relative ${COL} border-l border-sand-200 ${
         acceptsDrop && dropStartMin !== null ? "bg-brand-500/[0.04]" : ""
       }`}
       style={{ height: gridHeight }}
@@ -1245,14 +1195,17 @@ function StaffColumn({
       />
 
       {/*
-        Өнгөрсөн цаг — бүдгэрч, дарагдахгүй болно. Дарах давхаргын ДАРАА
-        байрлах тул хулганы үйлдлийг өөртөө авч, шинэ захиалгын цонх нээгдэхгүй.
-        (Чирж зөөх нь ажиллана — эдгээр давхарга drag үйлдлийг таслахгүй.)
+        Өнгөрсөн цаг — зөвхөн БҮДГЭРНЭ, хаагдахгүй.
+
+        Бүртгэлгүй үлдсэн үйлчилгээг дууссаны дараа буцааж бүртгэх нь ресепшний
+        өдөр тутмын ажил тул энд ч дарж захиалга оруулна. Өнгө нь «энэ аль
+        хэдийн өнгөрсөн» гэдгийг л сануулна. `pointer-events-none` — доод талын
+        дарах давхарга ажиллах ёстой.
       */}
       {nowMin !== null && nowMin > rangeStart ? (
         <div
-          title="Өнгөрсөн цаг — шинэ захиалга бүртгэхгүй"
-          className="absolute inset-x-0 top-0 cursor-not-allowed bg-sand-100/70"
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 bg-sand-100/70"
           style={{ height: (Math.min(nowMin, rangeEnd) - rangeStart) * pxPerMin }}
         />
       ) : null}
@@ -1308,6 +1261,7 @@ function StaffColumn({
           onDragStart={onDragStartAppointment}
           onDragEnd={onDragEndAppointment}
           color={colorOf(appointment)}
+          onConfirm={onConfirm}
         />
       ))}
 
@@ -1367,6 +1321,7 @@ function AppointmentBlock({
   onDragStart,
   onDragEnd,
   color,
+  onConfirm,
 }: {
   appointment: DayAppointment;
   rangeStart: number;
@@ -1383,6 +1338,7 @@ function AppointmentBlock({
   onDragEnd: () => void;
   /** Энэ захиалгын өнгө — өдрийн дараалалаар DayGrid оноодог */
   color: string;
+  onConfirm: (appointment: DayAppointment) => void;
 }) {
   const startMin = toLocalMinutes(appointment.startAt);
   const endLocal = toLocalMinutes(appointment.endAt);
@@ -1391,6 +1347,18 @@ function AppointmentBlock({
 
   const cancelled = appointment.status === "CANCELLED";
   const noShow = appointment.status === "NO_SHOW";
+
+  /**
+   * Баталгаажсан эсэх — «Захиалсан» бол хараахан үгүй.
+   *
+   * Ирсэн/дууссан захиалга нь мэдээж баталгаажсан тул тэмдэг нь дүүрэн
+   * харагдана, гэхдээ буцааж «Захиалсан» болгохгүй — тэр нь ухраалт болно.
+   */
+  const confirmed = !cancelled && !noShow && appointment.status !== "BOOKED";
+  const canConfirm =
+    canDrag &&
+    (appointment.status === "BOOKED" || appointment.status === "CONFIRMED");
+
   const width = 100 / columns;
   const height = Math.max(duration * pxPerMin - 4, 22);
   /** Маш намхан блок — цаг ба нэрийг НЭГ мөрөнд шахна. */
@@ -1549,7 +1517,10 @@ function AppointmentBlock({
             {appointment.client.name}
           </p>
           {/* Үйлчилгээний нэр — намхан блокт ч ХАСАГДАХГҮЙ, зөвхөн жижигрэнэ */}
-          <p className={`truncate pr-5 ${serviceClass}`} style={{ color }}>
+          <p
+            className={`truncate ${dense ? "pr-6" : "pr-11"} ${serviceClass}`}
+            style={{ color }}
+          >
             {appointment.items.map((item) => item.name).join(", ")}
           </p>
         </>
@@ -1565,14 +1536,62 @@ function AppointmentBlock({
         дээгүүр нь очиход тодорно.
       */}
       {!tiny ? (
-        <span className="absolute bottom-0.5 right-0.5 opacity-70 transition-opacity focus-within:opacity-100 group-hover/appt:opacity-100 md:bottom-1 md:right-1">
-          <CopyButton
-            compact
-            label=""
-            title="Захиалгын мэдээллийг хуулах"
-            getText={() => copyTextFor(appointment)}
-            className="flex size-[18px] items-center justify-center rounded-md border border-sand-300 bg-white/90 text-sand-500 shadow-sm transition hover:border-sand-400 hover:bg-white hover:text-sand-900 md:size-5"
-          />
+        <span className="absolute bottom-0.5 right-0.5 flex items-center gap-1 md:bottom-1 md:right-1">
+          {/*
+            БАТАЛГААЖУУЛАХ — нэг дарахад. Дүүрэн бол утсаар ярьж баталсан гэсэн
+            үг. Үргэлж харагдана: ресепшн өдөрт олон удаа дардаг товч.
+          */}
+          {!cancelled && !noShow ? (
+            <button
+              type="button"
+              disabled={!canConfirm}
+              title={
+                confirmed
+                  ? canConfirm
+                    ? "Баталгаажсан — буцаах бол дарна"
+                    : "Баталгаажсан"
+                  : "Баталгаажуулах"
+              }
+              aria-pressed={confirmed}
+              aria-label={`${appointment.client.name} — баталгаажуулах`}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (canConfirm) onConfirm(appointment);
+              }}
+              className={`flex size-[18px] items-center justify-center rounded-md border shadow-sm transition md:size-5 ${
+                confirmed
+                  ? "border-brand-600 bg-brand-600 text-white"
+                  : "border-sand-400 bg-white/90 text-transparent hover:border-brand-500 hover:text-brand-300"
+              } ${canConfirm ? "" : "cursor-default"}`}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className="size-3"
+                aria-hidden
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={3}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="m5 13 4 4L19 7" />
+              </svg>
+            </button>
+          ) : null}
+
+          {/*
+            Захиалгын мэдээллийг хуулах — үйлчлүүлэгч рүү баталгаажуулалт
+            илгээхэд. Намхан блокт багтахгүй тул зөвхөн бүтэн блокт.
+          */}
+          {!dense ? (
+            <CopyButton
+              compact
+              label=""
+              title="Захиалгын мэдээллийг хуулах"
+              getText={() => copyTextFor(appointment)}
+              className="flex size-[18px] items-center justify-center rounded-md border border-sand-300 bg-white/90 text-sand-500 shadow-sm transition hover:border-sand-400 hover:bg-white hover:text-sand-900 md:size-5"
+            />
+          ) : null}
         </span>
       ) : null}
     </div>

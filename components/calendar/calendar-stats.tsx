@@ -34,12 +34,22 @@ export function CalendarStats({
   }
 
   return (
-    <div className="no-print flex items-center gap-x-5 border-y border-sand-200 bg-sand-50 px-4 py-2.5 md:gap-x-8 md:px-6 md:py-2">
-      <div className="scrollbar-slim flex min-w-0 flex-1 items-center gap-x-5 overflow-x-auto md:gap-x-8">
+    /*
+      Гар утсанд өдрийн харагдац дээр энэ мөр ОГТ гарахгүй — жижиг дэлгэцэнд
+      хуанли өөрөө л чухал. 15/30 хоногийн харагдац дээр байхад нь харин
+      гарч ирнэ, эс тэгвэл өдөр рүүгээ буцах гарц үлдэхгүй.
+    */
+    <div
+      className={`no-print items-center gap-x-3 border-y border-sand-200 bg-sand-50 px-3 py-1 md:flex md:gap-x-8 md:px-6 md:py-2 ${
+        view === 0 ? "hidden" : "flex"
+      }`}
+    >
+      {/* Тоонууд зөвхөн компьютер, таблет дээр */}
+      <div className="scrollbar-slim hidden min-w-0 flex-1 items-center gap-x-3 overflow-x-auto md:flex md:gap-x-8">
         {items.map((item) => (
           <p
             key={item.label}
-            className="flex shrink-0 items-baseline gap-2 whitespace-nowrap text-sm"
+            className="flex shrink-0 items-baseline gap-1.5 whitespace-nowrap text-[11px] md:gap-2 md:text-sm"
           >
             <span className="text-sand-500">{item.label}</span>
             <span className="font-semibold text-sand-900">{item.value}</span>
@@ -47,13 +57,13 @@ export function CalendarStats({
         ))}
       </div>
 
-      <div className="flex shrink-0 items-center gap-0.5 rounded-full bg-sand-200/70 p-1">
+      <div className="ml-auto flex shrink-0 items-center gap-0.5 rounded-full bg-sand-200/70 p-0.5 md:ml-0 md:p-1">
         {VIEWS.map((item) => (
           <button
             key={item.value}
             type="button"
             onClick={() => changeView(item.value)}
-            className={`whitespace-nowrap rounded-full px-2.5 py-1 text-xs transition md:px-3.5 ${
+            className={`whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] transition md:px-3.5 md:py-1 md:text-xs ${
               optimisticView === item.value
                 ? "bg-white font-medium text-sand-900 shadow-sm"
                 : "text-sand-500 hover:text-sand-800"

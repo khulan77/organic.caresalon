@@ -30,12 +30,13 @@ export const MAX_BOOKING_DAYS = 365;
 export const MAX_DURATION_MIN = 12 * 60;
 
 /**
- * Өнгөрсөн цаг руу ШИНЭ захиалга бүртгэхийг хэдэн минутаар өршөөх вэ.
+ * ӨНГӨРСӨН өдрөөр хэр хол ухраад бүртгэж болох вэ.
  *
- * Хуанли 30 минутын нүдтэй тул «яг одоо явж байгаа нүд» рүү бүртгэх нь
- * хэвийн (10:00–10:30 нүдэнд 10:05-д бүртгэх). Түүнээс хойшхыг хаана.
+ * Салонд бүртгэлгүй үйлчлүүлсэн цагийг ажил дууссаны дараа буцаж бүртгэх нь
+ * хэвийн — тиймээс өнгөрсөн цаг, өнгөрсөн өдөр хоёулаа НЭЭЛТТЭЙ. Энэ хязгаар
+ * нь зөвхөн огноог андуурч бичсэнийг барихад (жишээ нь буруу он) зориулагдсан.
  */
-const PAST_GRACE_MIN = 30;
+export const MAX_BACKDATE_DAYS = 90;
 
 export type SlotInput = {
   branchId: string;
@@ -49,14 +50,6 @@ export type SlotInput = {
   excludeAppointmentId?: string;
   /** Бүлгээр засварлах үед — бүлгийн бүх мөрийг давхцалд тооцохгүй */
   excludeAppointmentIds?: string[];
-  /**
-   * Өнөөдрийн ӨНГӨРСӨН цагийг хориглох эсэх.
-   *
-   * ШИНЭ захиалга дээр л `true` — үдээс хойш «өглөөний 10 цагт» захиалга
-   * бүртгэгдэхээс сэргийлнэ. Байгаа захиалгыг засах/зөөхөд хэрэглэхгүй:
-   * өглөө болсон захиалгыг үдээс хойш засах нь хэвийн ажил.
-   */
-  rejectPastTime?: boolean;
   /**
    * ДАВХАР ЗАХИАЛГА — өөр захиалгатай давхцахыг зөвшөөрнө.
    *
@@ -102,20 +95,11 @@ export async function validateSlot(input: SlotInput): Promise<SlotIssue[]> {
 
   const endMin = startMin + durationMin;
   const today = todayKey();
-  if (dateKey < today) {
+  if (dateKey < addDays(today, -MAX_BACKDATE_DAYS)) {
     issues.push({
-      code: "PAST",
-      message: "Өнгөрсөн өдөрт цаг захиалах боломжгүй.",
+      code: "TOO_OLD",
+      message: `Хамгийн ихдээ ${MAX_BACKDATE_DAYS} хоногийн өмнөх цагийг буцааж бүртгэнэ. Огноогоо шалгана уу.`,
     });
-  }
-  if (input.rejectPastTime && dateKey === today) {
-    const nowMin = toLocalMinutes(new Date());
-    if (startMin + PAST_GRACE_MIN <= nowMin) {
-      issues.push({
-        code: "PAST_TIME",
-        message: `Өнгөрсөн цагт шинэ захиалга бүртгэх боломжгүй. Одоо ${formatMinutes(nowMin)} болж байна.`,
-      });
-    }
   }
   if (dateKey > addDays(today, MAX_BOOKING_DAYS)) {
     issues.push({
@@ -297,8 +281,6 @@ export async function findFreeStartTimes(input: {
   stepMin?: number;
   /** Засварлаж буй бүлгийн мөрүүд — өөрсдийгөө завгүй гэж үзэхгүй */
   excludeAppointmentIds?: string[];
-  /** Зөвхөн ШИНЭ захиалгад — өнгөрсөн цагийг санал болгохгүй */
-  rejectPastTime?: boolean;
   /** Давхар захиалга — завгүй цагийг ч санал болгоно */
   allowOverlap?: boolean;
 }): Promise<FreeSlots> {
@@ -313,8 +295,8 @@ export async function findFreeStartTimes(input: {
   }
 
   const today = todayKey();
-  if (dateKey < today) {
-    return { slots: [], reason: "Өнгөрсөн өдөрт цаг захиалах боломжгүй." };
+  if (dateKey < addDays(today, -MAX_BACKDATE_DAYS)) {
+    return { slots: [], reason: "Огноо хэт эрт байна." };
   }
   if (dateKey > addDays(today, MAX_BOOKING_DAYS)) {
     return { slots: [], reason: "Огноо хэт хол байна." };
@@ -409,18 +391,14 @@ export async function findFreeStartTimes(input: {
     );
   }
 
-  // Өнөөдөр бол өнгөрсөн цагийг санал болгохгүй — сервер ч татгалзана
-  const notBefore =
-    input.rejectPastTime && dateKey === today
-      ? toLocalMinutes(new Date()) - PAST_GRACE_MIN + 1
-      : 0;
-
   const step =
     input.stepMin && input.stepMin >= SLOT_STEP_MIN
       ? input.stepMin
       : defaultSlotStep(durationMin);
 
-  const slots = startTimesIn(free, durationMin, step, notBefore);
+  // Өнгөрсөн цагийг ч санал болгоно — бүртгэлгүй үлдсэн үйлчилгээг ажил
+  // дууссаны дараа буцааж бүртгэх нь ресепшний өдөр тутмын ажил
+  const slots = startTimesIn(free, durationMin, step);
 
   return {
     slots,

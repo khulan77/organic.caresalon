@@ -55,13 +55,11 @@ export function ReportFilters({
   branches: BranchSummary[];
   fromKey: string;
   toKey: string;
-  /** null бол бүх салбар */
   branchId: string | null;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // Сервер шинэ хуудсыг буцаах хүртэл сонголтыг шууд харуулна
   const [optimistic, setOptimistic] = useOptimistic({
     fromKey,
     toKey,

@@ -58,11 +58,11 @@ export function CalendarHeader({
   return (
     <header className="no-print shrink-0 bg-sand-50">
       {/* ── Мөр 1: огноо ба үйлдэл ── */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2.5 px-4 pb-3 pt-4 md:gap-x-4 md:px-6 md:pb-2 md:pt-3">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-3 pb-1 pt-1.5 md:gap-x-4 md:px-6 md:pb-2 md:pt-3">
         <button
           type="button"
           onClick={() => navigate({ dateKey: today })}
-          className={`shrink-0 rounded-full border px-3.5 py-1.5 text-sm transition hover:bg-sand-100 md:px-5 md:py-1.5 ${
+          className={`shrink-0 rounded-full border px-2.5 py-0.5 text-xs transition hover:bg-sand-100 md:px-5 md:py-1.5 md:text-sm ${
             isToday
               ? "border-sand-200 text-sand-400"
               : "border-sand-300 text-sand-700"
@@ -71,7 +71,8 @@ export function CalendarHeader({
           Өнөөдөр
         </button>
 
-        <div className="order-last flex w-full items-center justify-center gap-2 md:order-none md:w-auto md:justify-start">
+        {/* Утсанд огноо нь эгнээний голд шахагдана — тусдаа мөр эзлэхгүй */}
+        <div className="flex min-w-0 flex-1 items-center justify-center gap-0.5 md:flex-none md:gap-2 md:justify-start">
           <ArrowButton
             direction="prev"
             onClick={() => navigate({ dateKey: addDays(optimistic.dateKey, -1) })}
@@ -79,10 +80,10 @@ export function CalendarHeader({
 
           {/* Огноон дээр дарж хуанлиас сонгоно */}
           <label className="relative cursor-pointer">
-            <span className="whitespace-nowrap font-mono text-base tracking-tight text-sand-900 md:text-xl">
+            <span className="whitespace-nowrap font-mono text-xs tracking-tight text-sand-900 md:text-xl">
               {date}
             </span>
-            <span className="ml-2 hidden text-lg text-sand-400 sm:inline">
+            <span className="ml-1.5 hidden text-xs text-sand-400 sm:inline md:ml-2 md:text-lg">
               {weekday}
             </span>
             <input
@@ -102,7 +103,7 @@ export function CalendarHeader({
           />
         </div>
 
-        <div className="flex-1" />
+        <div className="hidden flex-1 md:block" />
 
         <button
           type="button"
@@ -113,9 +114,9 @@ export function CalendarHeader({
               ? undefined
               : "Энэ салбарт захиалга бүртгэх эрхгүй — зөвхөн харна"
           }
-          className="shrink-0 rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-sand-300 disabled:text-sand-500 disabled:shadow-none md:px-5 md:py-2"
+          className="shrink-0 rounded-xl bg-brand-600 px-2.5 py-1 text-xs font-medium text-white shadow-sm transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-sand-300 disabled:text-sand-500 disabled:shadow-none md:px-5 md:py-2 md:text-sm"
         >
-          <span aria-hidden className="mr-1.5">
+          <span aria-hidden className="mr-1">
             +
           </span>
           Захиалга<span className="hidden sm:inline"> нэмэх</span>
@@ -124,7 +125,7 @@ export function CalendarHeader({
 
       {/* ── Мөр 2: салбарууд ── */}
       <div
-        className={`scrollbar-slim flex items-center gap-2 px-4 pb-4 md:gap-3 md:overflow-x-auto md:px-6 md:pb-2.5 ${
+        className={`scrollbar-slim flex items-center gap-1.5 px-3 pb-1 md:gap-3 md:overflow-x-auto md:px-6 md:pb-2.5 ${
           fitsOnPhone ? "flex-wrap md:flex-nowrap" : "overflow-x-auto"
         }`}
       >
@@ -142,7 +143,7 @@ export function CalendarHeader({
                 onClick={() => navigate({ branchId: branch.id })}
                 aria-current={active ? "true" : undefined}
                 title={branch.address}
-                className={`flex items-center justify-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs transition md:gap-2 md:px-4 md:py-1.5 md:text-sm ${
+                className={`flex items-center justify-center gap-1 rounded-full px-2 py-0.5 text-[11px] transition md:gap-2 md:px-4 md:py-1.5 md:text-sm ${
                   fitsOnPhone ? "min-w-0 flex-1 md:flex-none" : "shrink-0"
                 } ${
                   active
@@ -185,7 +186,7 @@ function ArrowButton({
       type="button"
       onClick={onClick}
       aria-label={direction === "prev" ? "Өмнөх өдөр" : "Дараагийн өдөр"}
-      className="flex size-8 items-center justify-center rounded-full text-lg text-sand-400 transition hover:bg-sand-200 hover:text-sand-800"
+      className="flex size-7 items-center justify-center rounded-full text-base text-sand-400 transition hover:bg-sand-200 hover:text-sand-800 md:size-8 md:text-lg"
     >
       {direction === "prev" ? "‹" : "›"}
     </button>
