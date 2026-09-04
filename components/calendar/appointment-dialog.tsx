@@ -290,13 +290,6 @@ export function AppointmentDialog({
   const payments = editing?.payments ?? [];
   const money = summarize({ totalPrice, payments });
 
-  function addChargeRow() {
-    setCharges((current) => [
-      ...current,
-      { key: `new-${Date.now()}-${current.length}`, amount: "" },
-    ]);
-  }
-
   function updateChargeRow(key: string, amount: string) {
     setCharges((current) =>
       current.map((charge) =>
@@ -305,8 +298,16 @@ export function AppointmentDialog({
     );
   }
 
+  /**
+   * Мөр нэмэх товч байхгүй тул сүүлчийн мөрийг устгахгүй — зөвхөн дүнг нь
+   * цэвэрлэнэ. Эс тэгвэл нэмэлт төлбөр бичих талбар алга болно.
+   */
   function removeChargeRow(key: string) {
-    setCharges((current) => current.filter((charge) => charge.key !== key));
+    setCharges((current) =>
+      current.length > 1
+        ? current.filter((charge) => charge.key !== key)
+        : current.map((charge) => ({ ...charge, amount: "" })),
+    );
   }
 
   /**
@@ -386,6 +387,9 @@ export function AppointmentDialog({
   const slotStaffNames = slotStaffIds
     .map((id) => staff.find((member) => member.id === id)?.name ?? "—")
     .join(", ");
+  /** Үндсэн ажилтны нэр — «тогтмол мастер» тайлбарт нэрээр нь ярина. */
+  const primaryStaffName =
+    staff.find((member) => member.id === primaryStaffId)?.name ?? "энэ мастер";
 
   /**
    * Сул цагуудын хоорондын зай.
@@ -631,34 +635,26 @@ export function AppointmentDialog({
               Үйлчлүүлэгч — хайлт байхгүй, шууд бичнэ.
 
               Утсаар нь сервер өөрөө тааруулна: бүртгэлтэй дугаар бол тэр
-              хүн рүү наалдаж, нэр/тэмдэглэлийг нь шинэчилнэ, шинэ дугаар бол
+              хүн рүү наалдаж, нэрийг нь шинэчилнэ, шинэ дугаар бол
               шинээр бүртгэнэ. Иймд давхардал үүсэхгүй.
             */}
             <section>
               <SectionTitle>Үйлчлүүлэгч</SectionTitle>
-              <div className="space-y-2">
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <input
-                    name="clientName"
-                    defaultValue={editing?.client.name ?? ""}
-                    placeholder="Нэр"
-                    required
-                    className={inputClass}
-                  />
-                  <input
-                    name="clientPhone"
-                    type="tel"
-                    inputMode="numeric"
-                    defaultValue={editing?.client.phone ?? ""}
-                    placeholder="Утас"
-                    required
-                    className={inputClass}
-                  />
-                </div>
+              <div className="grid gap-2 sm:grid-cols-2">
                 <input
-                  name="clientNote"
-                  defaultValue={editing?.client.note ?? ""}
-                  placeholder="Тэмдэглэл (харшил, дуртай өнгө гэх мэт)"
+                  name="clientName"
+                  defaultValue={editing?.client.name ?? ""}
+                  placeholder="Нэр"
+                  required
+                  className={inputClass}
+                />
+                <input
+                  name="clientPhone"
+                  type="tel"
+                  inputMode="numeric"
+                  defaultValue={editing?.client.phone ?? ""}
+                  placeholder="Утас"
+                  required
                   className={inputClass}
                 />
               </div>
@@ -807,7 +803,7 @@ export function AppointmentDialog({
                 label="Үндсэн ажилтан"
                 hint={
                   staffLocked
-                    ? "Тогтмол мастер — солих бол доорх тэмдгийг эхлээд авна уу"
+                    ? "Тогтмол мастер — солих бол доорх унтраалгыг эхлээд унтраана уу"
                     : involvedStaffIds.length > 1
                       ? "Нэхэмжлэх энэ ажилтны мөрөнд наалдана"
                       : undefined
@@ -854,20 +850,53 @@ export function AppointmentDialog({
             {onlyThisStaff ? (
               <input type="hidden" name="onlyThisStaff" value="on" />
             ) : null}
-            <label className="flex items-start gap-2 text-sm text-sand-700">
+            <label
+              className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition has-[:disabled]:cursor-default ${
+                onlyThisStaff
+                  ? "border-brand-300 bg-brand-50/60"
+                  : "border-sand-200 bg-white hover:border-sand-300 hover:bg-sand-50"
+              }`}
+            >
+              {/* ★ тэмдэг — хуанли дээр яг ийм од болж харагдана */}
+              <span
+                className={`flex size-9 shrink-0 items-center justify-center rounded-full text-base transition ${
+                  onlyThisStaff
+                    ? "bg-brand-600 text-white shadow-sm"
+                    : "bg-sand-100 text-sand-400"
+                }`}
+                aria-hidden
+              >
+                ★
+              </span>
+
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium text-sand-900">
+                  Тогтмол мастер
+                </span>
+                <span className="mt-0.5 block text-xs leading-relaxed text-sand-500">
+                  {onlyThisStaff ? (
+                    <>
+                      Зөвхөн{" "}
+                      <strong className="font-medium text-brand-700">
+                        {primaryStaffName}
+                      </strong>
+                      -д үйлчлүүлнэ. Өөр мастер руу зөөхөөс хамгаалагдана.
+                    </>
+                  ) : (
+                    "Зөвхөн нэг хүнд үйлчлүүлдэг үйлчлүүлэгч бол асаана."
+                  )}
+                </span>
+              </span>
+
+              {/* Унтраалга — чагтнаас илүү тод, хуруугаар дарахад ч томхон */}
               <input
                 type="checkbox"
                 checked={onlyThisStaff}
                 onChange={(event) => setOnlyThisStaff(event.target.checked)}
-                className="mt-0.5 size-4 shrink-0 rounded border-sand-400 text-brand-600 focus:ring-brand-500/30"
+                className="peer sr-only"
               />
-              <span className="min-w-0">
-                Тогтмол мастер
-                <span className="block text-xs text-sand-500">
-                  «Зөвхөн {staff.find((m) => m.id === primaryStaffId)?.name ?? "энэ мастер"}-д
-                  үйлчлүүлнэ» гэсэн үйлчлүүлэгч. Хуанли дээр ★ болж харагдаж,
-                  өөр мастер руу чирч зөөхөөс хамгаална.
-                </span>
+              <span className="relative h-6 w-11 shrink-0 rounded-full bg-sand-300 transition peer-checked:bg-brand-600 peer-focus-visible:ring-2 peer-focus-visible:ring-brand-500/30 peer-disabled:opacity-50 peer-checked:[&>span]:translate-x-5">
+                <span className="absolute left-0.5 top-0.5 size-5 rounded-full bg-white shadow-sm transition" />
               </span>
             </label>
 
@@ -1156,14 +1185,6 @@ export function AppointmentDialog({
                       </div>
                     ))}
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={addChargeRow}
-                    className="mt-2 rounded-lg border border-sand-300 px-2.5 py-1 text-xs text-sand-700 transition hover:bg-sand-100"
-                  >
-                    + Дахин нэмэх
-                  </button>
                 </div>
 
                 <dl className="mt-3 space-y-1 border-t border-sand-100 pt-3 text-sm">
@@ -1287,16 +1308,10 @@ export function AppointmentDialog({
               </section>
             ) : null}
 
-            {/* Тэмдэглэл */}
-            <Field label="Тэмдэглэл">
-              <textarea
-                name="note"
-                rows={2}
-                defaultValue={editing?.note ?? ""}
-                placeholder="Жишээ: улаан гель хүсэж байна"
-                className={`${inputClass} resize-none`}
-              />
-            </Field>
+            {/* Тэмдэглэлийн талбар хассан — хуучин тэмдэглэлийг устгахгүйн тулд хадгална */}
+            {editing?.note ? (
+              <input type="hidden" name="note" defaultValue={editing.note} />
+            ) : null}
 
             {result && !result.ok ? <Issues issues={result.issues} /> : null}
 
