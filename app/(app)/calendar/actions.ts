@@ -734,6 +734,39 @@ export async function setAppointmentStatus(
   return { ok: true };
 }
 
+/**
+ * «Тогтмол мастер» тэмдгийг ХУАНЛИ дээрээс шууд асаах/унтраах.
+ *
+ * Ресепшн захиалгыг нээхгүйгээр нэрний өмнөх одыг дараад тэмдэглэнэ.
+ * Хамтарсан захиалгын бүх мөр хамт солигдоно — цонхны хадгалалт ч бүлгийн
+ * бүх мөрөнд нэг адил бичдэг тул хоёр зам ижил үр дүн өгнө.
+ */
+export async function setAppointmentOnlyThisStaff(
+  appointmentId: string,
+  value: boolean,
+): Promise<ActionResult> {
+  const user = await getActionUser();
+
+  const existing = await prisma.appointment.findUnique({
+    where: { id: appointmentId },
+    select: { branchId: true, groupId: true },
+  });
+  if (!existing) return { ok: false, issues: ["Захиалга олдсонгүй."] };
+  if (!canWriteBranch(user, existing.branchId)) {
+    return { ok: false, issues: [BRANCH_WRITE_DENIED] };
+  }
+
+  await prisma.appointment.updateMany({
+    where: existing.groupId
+      ? { groupId: existing.groupId }
+      : { id: appointmentId },
+    data: { onlyThisStaff: value },
+  });
+
+  refresh();
+  return { ok: true };
+}
+
 /** Захиалгыг бүрмөсөн устгах (зөвхөн буруу бүртгэлийг арилгахад). */
 export async function deleteAppointment(
   appointmentId: string,

@@ -13,19 +13,13 @@ export const metadata = { title: "Тайлан" };
 export default async function ReportsPage(props: PageProps<"/reports">) {
   await requireAdmin();
   const params = await props.searchParams;
-
-  // Анхдагч муж — сарын эхнээс өнөөдөр хүртэл
   const today = todayKey();
   const fromKey = isDateKey(params.from) ? params.from : `${today.slice(0, 7)}-01`;
   const toKey = isDateKey(params.to) ? params.to : today;
-
   const branches = await getBranches();
   const requested = typeof params.branch === "string" ? params.branch : "all";
   const branchId = branches.some((b) => b.id === requested) ? requested : null;
-
-  // Огноог урвуу оруулсан бол сольж өгнө — хоосон тайлан харуулахгүй
   const [start, end] = fromKey <= toKey ? [fromKey, toKey] : [toKey, fromKey];
-
   const report = await getReport({ fromKey: start, toKey: end, branchId });
 
   const branchName = branchId
@@ -47,23 +41,15 @@ export default async function ReportsPage(props: PageProps<"/reports">) {
       />
 
       <div className="min-h-0 flex-1 space-y-6 overflow-auto scrollbar-slim p-4 md:p-6">
-        {/*
-          Нэг гол тоо — нийт орлого. Задаргаа нь хажуудаа тусдаа хайрцгуудаар:
-          үйлчилгээ хэд, нэмэлт төлбөр хэд, хэдэн захиалга, нэг захиалга дунджаар хэд.
-        */}
         <section className="grid gap-3 lg:grid-cols-[1.4fr_1fr]">
           <div className="relative overflow-hidden rounded-2xl bg-brand-700 px-5 py-6 text-white shadow-sm md:px-6">
-            {/* Намуухан гэрэлтэлт — тоо нь дэвсгэрээсээ тодорно */}
+     
             <span
               aria-hidden
               className="pointer-events-none absolute -right-16 -top-16 size-52 rounded-full bg-white/5"
             />
             <p className="text-sm text-brand-100">Нийт орлого</p>
-            {/*
-              Гол тоо нь sans, ЖИГД БУС цифрээр. Serif эсвэл `tabular-nums`
-              хэрэглэвэл том хэмжээнд сул, чимэглэл шиг харагддаг — жигд өргөнтэй
-              цифр нь зөвхөн багана дотор дээрээс доош эгнэх үед хэрэгтэй.
-            */}
+         
             <p className="mt-1 text-4xl font-semibold tracking-tight md:text-5xl">
               {formatPrice(report.total.total)}
             </p>
@@ -108,8 +94,6 @@ export default async function ReportsPage(props: PageProps<"/reports">) {
     </>
   );
 }
-
-/** Гол тооны хажуугийн жижиг хайрцаг. */
 function Figure({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col justify-center rounded-2xl border border-sand-200 bg-white px-4 py-3">

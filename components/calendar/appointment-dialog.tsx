@@ -641,13 +641,45 @@ export function AppointmentDialog({
             <section>
               <SectionTitle>Үйлчлүүлэгч</SectionTitle>
               <div className="grid gap-2 sm:grid-cols-2">
-                <input
-                  name="clientName"
-                  defaultValue={editing?.client.name ?? ""}
-                  placeholder="Нэр"
-                  required
-                  className={inputClass}
-                />
+                {/*
+                  Тогтмол мастер — нэрний ЯГ ӨМНӨ, хуанли дээрх картны од
+                  байрлаж буй тэр байрандаа. Дарвал шар од болно.
+                */}
+                {onlyThisStaff ? (
+                  <input type="hidden" name="onlyThisStaff" value="on" />
+                ) : null}
+                <div className="flex items-center gap-2">
+                  <label
+                    title={
+                      onlyThisStaff
+                        ? `Тогтмол мастер — зөвхөн ${primaryStaffName}-д үйлчлүүлнэ`
+                        : "Тогтмол мастер — зөвхөн нэг хүнд үйлчлүүлдэг бол дарна"
+                    }
+                    className={`flex size-[46px] shrink-0 cursor-pointer select-none items-center justify-center rounded-lg border text-xl leading-none transition has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-brand-500/30 sm:size-[38px] sm:text-lg ${
+                      onlyThisStaff
+                        ? "border-warn-200 bg-warn-50 text-warn-600"
+                        : "border-sand-300 bg-white text-sand-300 hover:border-sand-400 hover:text-sand-400"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={onlyThisStaff}
+                      onChange={(event) =>
+                        setOnlyThisStaff(event.target.checked)
+                      }
+                      aria-label="Тогтмол мастер"
+                      className="sr-only"
+                    />
+                    <span aria-hidden>★</span>
+                  </label>
+                  <input
+                    name="clientName"
+                    defaultValue={editing?.client.name ?? ""}
+                    placeholder="Нэр"
+                    required
+                    className={`${inputClass} min-w-0 flex-1`}
+                  />
+                </div>
                 <input
                   name="clientPhone"
                   type="tel"
@@ -803,7 +835,7 @@ export function AppointmentDialog({
                 label="Үндсэн ажилтан"
                 hint={
                   staffLocked
-                    ? "Тогтмол мастер — солих бол доорх унтраалгыг эхлээд унтраана уу"
+                    ? "Тогтмол мастер — солих бол нэрний өмнөх ★ тэмдгийг эхлээд авна уу"
                     : involvedStaffIds.length > 1
                       ? "Нэхэмжлэх энэ ажилтны мөрөнд наалдана"
                       : undefined
@@ -841,64 +873,6 @@ export function AppointmentDialog({
                 />
               </Field>
             </section>
-
-            {/*
-              Тогтмол мастер — зарим үйлчлүүлэгч зөвхөн нэг хүнд үйлчлүүлдэг.
-              Ресепшн энд тэмдэглэвэл хуанли дээр од болж харагдаж, тэр
-              захиалгыг өөр мастер руу санамсаргүй чирч зөөхөөс хамгаална.
-            */}
-            {onlyThisStaff ? (
-              <input type="hidden" name="onlyThisStaff" value="on" />
-            ) : null}
-            <label
-              className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition has-[:disabled]:cursor-default ${
-                onlyThisStaff
-                  ? "border-brand-300 bg-brand-50/60"
-                  : "border-sand-200 bg-white hover:border-sand-300 hover:bg-sand-50"
-              }`}
-            >
-              {/* ★ тэмдэг — хуанли дээр яг ийм од болж харагдана */}
-              <span
-                className={`flex size-9 shrink-0 items-center justify-center rounded-full text-base transition ${
-                  onlyThisStaff
-                    ? "bg-brand-600 text-white shadow-sm"
-                    : "bg-sand-100 text-sand-400"
-                }`}
-                aria-hidden
-              >
-                ★
-              </span>
-
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium text-sand-900">
-                  Тогтмол мастер
-                </span>
-                <span className="mt-0.5 block text-xs leading-relaxed text-sand-500">
-                  {onlyThisStaff ? (
-                    <>
-                      Зөвхөн{" "}
-                      <strong className="font-medium text-brand-700">
-                        {primaryStaffName}
-                      </strong>
-                      -д үйлчлүүлнэ. Өөр мастер руу зөөхөөс хамгаалагдана.
-                    </>
-                  ) : (
-                    "Зөвхөн нэг хүнд үйлчлүүлдэг үйлчлүүлэгч бол асаана."
-                  )}
-                </span>
-              </span>
-
-              {/* Унтраалга — чагтнаас илүү тод, хуруугаар дарахад ч томхон */}
-              <input
-                type="checkbox"
-                checked={onlyThisStaff}
-                onChange={(event) => setOnlyThisStaff(event.target.checked)}
-                className="peer sr-only"
-              />
-              <span className="relative h-6 w-11 shrink-0 rounded-full bg-sand-300 transition peer-checked:bg-brand-600 peer-focus-visible:ring-2 peer-focus-visible:ring-brand-500/30 peer-disabled:opacity-50 peer-checked:[&>span]:translate-x-5">
-                <span className="absolute left-0.5 top-0.5 size-5 rounded-full bg-white shadow-sm transition" />
-              </span>
-            </label>
 
             {/*
               Үргэлжлэх хугацаа ба давхар захиалга.

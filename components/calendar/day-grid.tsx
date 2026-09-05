@@ -35,6 +35,7 @@ import {
 } from "@/lib/payments";
 import {
   moveAppointment,
+  setAppointmentOnlyThisStaff,
   setAppointmentStatus,
 } from "@/app/(app)/calendar/actions";
 import { deleteTimeOff } from "@/app/(app)/staff/actions";
@@ -259,6 +260,16 @@ export function DayGrid({
     ) => ({ ...current, [next.id]: next.status }),
   );
 
+  /** «Тогтмол мастер» одны ӨӨДРӨГ төлөв — дарангуут шар болно. */
+  const [, startStar] = useTransition();
+  const [starPatch, patchStar] = useOptimistic(
+    {} as Record<string, boolean>,
+    (
+      current: Record<string, boolean>,
+      next: { id: string; value: boolean },
+    ) => ({ ...current, [next.id]: next.value }),
+  );
+
   /**
    * Хуанлийн дээд талын алдааны мэдэгдэл.
    *
@@ -370,15 +381,20 @@ export function DayGrid({
     // Дөнгөж дарсан баталгаажуулалтыг сервер бичиж амжаагүй байхад нь харуулна
     const patched = appointments.map((appointment) => {
       const status = statusPatch[appointment.id];
-      return status && status !== appointment.status
-        ? { ...appointment, status }
-        : appointment;
+      const star = starPatch[appointment.id];
+      const next =
+        status && status !== appointment.status
+          ? { ...appointment, status }
+          : appointment;
+      return star !== undefined && star !== next.onlyThisStaff
+        ? { ...next, onlyThisStaff: star }
+        : next;
     });
 
     return showCancelled
       ? patched
       : patched.filter((a) => a.status !== "CANCELLED");
-  }, [appointments, showCancelled, statusPatch]);
+  }, [appointments, showCancelled, statusPatch, starPatch]);
 
   // Тогтмол мужаас гадуур ажлын цаг эсвэл захиалга байвал хуанли сунана
   const { rangeStart, rangeEnd } = useMemo(() => {
@@ -660,6 +676,30 @@ export function DayGrid({
 
       const result = await setAppointmentStatus(appointment.id, next);
       if (!result.ok) showIssues("Төлөв солиж чадсангүй.", result.issues);
+    });
+  }
+
+  /**
+   * «Тогтмол мастер» — нэрний өмнөх одыг дарж шууд асаана/унтраана.
+   *
+   * Захиалга нээх шаардлагагүй: од шар бол зөвхөн энэ мастерт үйлчлүүлнэ
+   * гэсэн үг, тэр захиалгыг өөр багана руу чирэх боломжгүй болно.
+   */
+  function toggleOnlyThisStaff(appointment: DayAppointment) {
+    setNotice(null);
+    const next = !appointment.onlyThisStaff;
+
+    startStar(async () => {
+      // Хамтарсан захиалгын бүх мөр хамт — сервер тийнхүү бичдэг
+      for (const row of appointments) {
+        const sameGroup = appointment.groupId
+          ? row.groupId === appointment.groupId
+          : row.id === appointment.id;
+        if (sameGroup) patchStar({ id: row.id, value: next });
+      }
+
+      const result = await setAppointmentOnlyThisStaff(appointment.id, next);
+      if (!result.ok) showIssues("Тэмдэг тавьж чадсангүй.", result.issues);
     });
   }
 
@@ -954,6 +994,7 @@ export function DayGrid({
                 onDropInColumn={dropInColumn}
                 colorOf={colorOf}
                 onConfirm={toggleConfirmed}
+                onToggleStar={canWrite ? toggleOnlyThisStaff : null}
                 onRemoveTimeOff={canWrite ? removeTimeOff : null}
                 onCreate={(startMin, allowOverlap) => {
                   clearNewParam();
@@ -1135,6 +1176,7 @@ function StaffColumn({
   onDropInColumn,
   colorOf,
   onConfirm,
+  onToggleStar,
   onRemoveTimeOff,
 }: {
   member: DayStaff;
@@ -1163,6 +1205,8 @@ function StaffColumn({
   onDropInColumn: (staffId: string, pointerMin: number) => void;
   colorOf: (appointment: DayAppointment) => string;
   onConfirm: (appointment: DayAppointment) => void;
+  /** «Тогтмол мастер» од — эрхгүй хэрэглэгчид `null` */
+  onToggleStar: ((appointment: DayAppointment) => void) | null;
   /** Чөлөө болиулах — эрхгүй хэрэглэгчид `null` */
   onRemoveTimeOff: ((timeOffId: string) => void) | null;
 }) {
@@ -1357,6 +1401,7 @@ function StaffColumn({
           onDragEnd={onDragEndAppointment}
           color={colorOf(appointment)}
           onConfirm={onConfirm}
+          onToggleStar={onToggleStar}
           onAddParallel={
             locked ? null : (parallelStart) => onCreate(parallelStart, true)
           }
@@ -1420,6 +1465,7 @@ function AppointmentBlock({
   onDragEnd,
   color,
   onConfirm,
+  onToggleStar,
   onAddParallel,
 }: {
   appointment: DayAppointment;
@@ -1438,6 +1484,8 @@ function AppointmentBlock({
   /** Энэ захиалгын өнгө — өдрийн дараалалаар DayGrid оноодог */
   color: string;
   onConfirm: (appointment: DayAppointment) => void;
+  /** «Тогтмол мастер» одыг асаах/унтраах — эрхгүй бол `null` */
+  onToggleStar: ((appointment: DayAppointment) => void) | null;
   /**
    * ДАВХАР ЗАХИАЛГА нэмэх — энэ захиалгын цаг дээр ХАЖУУД нь нэг захиалга.
    * Бичих эрхгүй эсвэл амралттай багана дээр `null`.
@@ -1527,6 +1575,39 @@ function AppointmentBlock({
    * сэргээх ёстой, эс тэгвэл идэвхтэй захиалгын цаг руу чимээгүй шургална.
    */
   const draggable = canDrag && !cancelled && !noShow;
+
+  /**
+   * «ТОГТМОЛ МАСТЕР» ОД — захиалга бүрийн нэрний өмнө ҮРГЭЛЖ харагдана.
+   *
+   * Хоосон од (☆) дээр дарвал шар од (★) болно: тэр үйлчлүүлэгч зөвхөн энэ
+   * мастерт үйлчлүүлнэ гэсэн үг — захиалга нь өөр багана руу зөөгдөхөөс
+   * хамгаалагдана. Дахин дарвал буцаад хоосон болно. Захиалгыг нээх
+   * шаардлагагүй — чагт тавихтай яг адилхан, нэг даралт.
+   */
+  const starOn = appointment.onlyThisStaff;
+  const canStar = Boolean(onToggleStar);
+  const starMark = (
+    <button
+      type="button"
+      disabled={!canStar}
+      aria-pressed={starOn}
+      aria-label={`${appointment.client.name} — тогтмол мастер`}
+      title={
+        starOn
+          ? "Тогтмол мастер — зөвхөн энэ хүнд үйлчлүүлдэг. Авах бол дарна"
+          : "Тогтмол мастер болгох — зөвхөн энэ хүнд үйлчлүүлдэг бол дарна"
+      }
+      onClick={(event) => {
+        event.stopPropagation();
+        onToggleStar?.(appointment);
+      }}
+      className={`mr-1 inline-block align-baseline leading-none transition ${
+        starOn ? "text-warn-600" : "text-sand-400/60"
+      } ${canStar ? "hover:text-warn-600" : "cursor-default"}`}
+    >
+      {starOn ? "★" : "☆"}
+    </button>
+  );
 
   // Хуулах товчийг дотор нь байрлуулах тул блок нь <button> БИШ — HTML-д
   // товч дотор товч байж болохгүй. Гар (keyboard)-ын үйлдлийг гараар өгнө.
@@ -1693,11 +1774,7 @@ function AppointmentBlock({
           >
             {formatMinutes(startMin)}
           </span>
-          {appointment.onlyThisStaff ? (
-            <span aria-hidden className="mr-0.5 text-warn-600">
-              ★
-            </span>
-          ) : null}
+          {starMark}
           {grouped ? (
             <span aria-hidden className="mr-0.5 text-sand-500">
               ⇄
@@ -1718,15 +1795,7 @@ function AppointmentBlock({
               cancelled ? "line-through" : ""
             }`}
           >
-            {appointment.onlyThisStaff ? (
-              <span
-                aria-hidden
-                title="Тогтмол мастер — зөвхөн энэ хүнд үйлчлүүлдэг"
-                className="mr-1 text-warn-600"
-              >
-                ★
-              </span>
-            ) : null}
+            {starMark}
             {grouped ? (
               <span
                 aria-hidden
